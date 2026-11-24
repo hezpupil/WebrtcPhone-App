@@ -1,0 +1,107 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*', 'ios-*']
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ios
+
+env:
+  XCODE_PROJECT: WebrtcPhone.xcodeproj
+  SCHEME: WebrtcPhone
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Archive & Package unsigned IPA
+    runs-on: macos-14
+    steps:
+      - name: Checkout monorepo
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Resolve Swift Package dependencies
+        run: xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT" -scheme "$SCHEME"
+
+      - name: Show build settings
+        run: xcodebuild -showBuildSettings -project "$XCODE_PROJECT" -scheme "$SCHEME" -configuration "$CONFIGURATION" | head -40
+
+      - name: Clean derived data
+        run: rm -rf ~/Library/Developer/Xcode/DerivedData/WebrtcPhone-*
+
+      - name: Build archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -archivePath "$RUNNER_TEMP/WebrtcPhone.xcarchive" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SKIP_INSTALL=NO
+
+      - name: Export unsigned IPA
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/WebrtcPhone.xcarchive"
+          APP=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP" ]; then
+            echo "No .app found in archive" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$RUNNER_TEMP/WebrtcPhone-unsigned.ipa" Payload
+          echo "IPA created at $RUNNER_TEMP/WebrtcPhone-unsigned.ipa"
+          ls -lh "$RUNNER_TEMP/WebrtcPhone-unsigned.ipa"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebrtcPhone-iOS-unsigned-IPA
+          path: ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release (on v* / ios-* tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
+          generate_release_notes: true
+          append_body: true
+          body: |
+            ## iOS 客户端（未签名 IPA）
+            由 `build-ios.yml` 自动构建。此为未签名标准 IPA：
+            - TrollStore：直接打开安装（支持 iOS 14.0–16.6.1 / 17.0）
+            - 企业/个人签名：下载后用签名工具重签再安装
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
