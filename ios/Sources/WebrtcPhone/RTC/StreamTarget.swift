@@ -111,4 +111,14 @@ struct StreamTarget: Equatable {
     var isGuest: Bool { if case .share = auth { return true }; return false }
     var isCamera: Bool { if case .camera = mode { return true }; return false }
     var isWs: Bool { transport == .websocket }
+
+    static func == (lhs: StreamTarget, rhs: StreamTarget) -> Bool {
+        lhs.endpoint == rhs.endpoint && lhs.deviceId == rhs.deviceId &&
+        lhs.deviceName == rhs.deviceName && lhs.auth == rhs.auth &&
+        lhs.accessMode == rhs.accessMode && lhs.allowClipboard == rhs.allowClipboard &&
+        lhs.allowFileTx == rhs.allowFileTx && lhs.allowTerminal == rhs.allowTerminal &&
+        lhs.mode == rhs.mode && lhs.settings == rhs.settings &&
+        lhs.transport == rhs.transport && lhs.displayHint?.0 == rhs.displayHint?.0 &&
+        lhs.displayHint?.1 == rhs.displayHint?.1 && lhs.projectionOnDemand == rhs.projectionOnDemand
+    }
 }
