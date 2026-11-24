@@ -1,0 +1,95 @@
+name: WebrtcPhone
+options:
+  deploymentTarget:
+    iOS: "15.0"
+  groupSortPosition: top
+
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    from: 158.0.0
+
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios
+    MARKETING_VERSION: "0.5.0"
+    CURRENT_PROJECT_VERSION: 1
+    SWIFT_VERSION: "5.10"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    ENABLE_PREVIEWS: YES
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      GCC_OPTIMIZATION_LEVEL: 0
+      ENABLE_TESTABILITY: YES
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+
+targets:
+  WebrtcPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/WebrtcPhone
+    resources:
+      - path: Resources/Assets.xcassets
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_NAME: WebrtcPhone
+        PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios
+        CODE_SIGN_ENTITLEMENTS: Resources/WebrtcPhone.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: 穿云投屏
+        CFBundleIdentifier: com.webrtc_phone.android.ios
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIBackgroundModes:
+          - audio
+        UIRequiredDeviceCapabilities:
+          - arm64
+        ITSAppUsesNonExemptEncryption: false
+
+  WebrtcPhoneTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/WebrtcPhoneTests
+    dependencies:
+      - target: WebrtcPhone
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios.tests
+
+schemes:
+  WebrtcPhone:
+    build:
+      targets:
+        WebrtcPhone: all
+        WebrtcPhoneTests: [test]
+    test:
+      targets:
+        - WebrtcPhoneTests
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
