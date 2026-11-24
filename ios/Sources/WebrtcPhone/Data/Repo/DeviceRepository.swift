@@ -167,7 +167,10 @@ final class DeviceRepository: ObservableObject {
         if image.size.width <= target { return image }
         let scale = target / image.size.width
         let size = CGSize(width: target, height: image.size.height * scale)
-        UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return rendered
     }
 
     // MARK: 设备 / 标签管理

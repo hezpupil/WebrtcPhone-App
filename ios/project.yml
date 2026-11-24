@@ -11,7 +11,7 @@ packages:
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios
+    PRODUCT_BUNDLE_IDENTIFIER: com.webrtcphone.ios
     MARKETING_VERSION: "0.5.0"
     CURRENT_PROJECT_VERSION: 1
     SWIFT_VERSION: "5.10"
@@ -43,7 +43,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: WebrtcPhone
-        PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.webrtcphone.ios
         CODE_SIGN_ENTITLEMENTS: Resources/WebrtcPhone.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS:
@@ -53,7 +53,7 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: 穿云投屏
-        CFBundleIdentifier: com.webrtc_phone.android.ios
+        CFBundleIdentifier: com.webrtcphone.ios
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -74,7 +74,7 @@ targets:
       - target: WebrtcPhone
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.webrtc_phone.android.ios.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.webrtcphone.ios.tests
 
 schemes:
   WebrtcPhone:

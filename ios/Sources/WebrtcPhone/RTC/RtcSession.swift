@@ -72,8 +72,17 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private let inputReadySubject = StateSubject<Bool>(false)
     var inputReady: AnyStatePublisher<Bool> { inputReadySubject.publisher }
 
-    let input: InputProtocol
-    let clipboard: ClipboardProtocol
+    lazy var input: InputProtocol = InputProtocol(
+        sender: { [weak self] text in self?.sendInput(text) ?? false },
+        viewOnly: { [weak self] in self?.target.viewOnly ?? true }
+    )
+    lazy var clipboard: ClipboardProtocol = ClipboardProtocol(
+        sender: { [weak self] text in self?.sendClipboard(text) ?? false },
+        enabled: { [weak self] in
+            guard let self else { return false }
+            return self.target.allowClipboard && !self.target.viewOnly
+        }
+    )
 
     private var audioEnabled = true
     private var audioTrack: RTCAudioTrack?
@@ -89,10 +98,6 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
         self.target = target
         self.projectionResumeKey = projectionResumeKey
         self.videoSizeSubject = StateSubject<(Int, Int)?>(target.displayHint)
-        self.input = InputProtocol(sender: { [weak self] text in self?.sendInput(text) ?? false },
-                                   viewOnly: { target.viewOnly })
-        self.clipboard = ClipboardProtocol(sender: { [weak self] text in self?.sendClipboard(text) ?? false },
-                                           enabled: { target.allowClipboard && !target.viewOnly })
         super.init()
         frameSink.owner = self
     }
