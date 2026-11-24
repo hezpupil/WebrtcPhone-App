@@ -194,14 +194,13 @@ final class DeviceRepository: ObservableObject {
         let next = transform(old)
         guard next != old else { return }
         tagSaveInFlight += 1
+        defer { tagSaveInFlight -= 1 }
         tags = next
         do {
             try await api.saveTags(next)
         } catch {
             tags = old
             throw error
-        } finally {
-            tagSaveInFlight -= 1
         }
     }
 }
