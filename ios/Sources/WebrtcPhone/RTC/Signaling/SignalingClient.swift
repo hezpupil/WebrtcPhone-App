@@ -88,10 +88,12 @@ final class SignalingClient: NSObject {
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    if let m = SignalingProtocol.parse(text), case .pong = m {
-                        // 心跳应答，忽略
-                    } else if let m {
-                        self.listener?.onMessage(m)
+                    if let parsed = SignalingProtocol.parse(text) {
+                        if case .pong = parsed {
+                            // 心跳应答，忽略
+                        } else {
+                            self.listener?.onMessage(parsed)
+                        }
                     }
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8),
@@ -112,7 +114,7 @@ final class SignalingClient: NSObject {
     @discardableResult
     func send(_ text: String) -> Bool {
         guard !isClosedByUs else { return false }
-        task?.send(message: .string(text)) { _ in }
+        task?.send(.string(text)) { _ in }
         return task != nil
     }
 
@@ -132,7 +134,7 @@ final class SignalingClient: NSObject {
         timer.schedule(deadline: .now() + 20, repeating: 20)
         timer.setEventHandler { [weak self] in
             guard let self, !self.isClosedByUs else { return }
-            self.task?.send(message: .string(SignalingProtocol.ping)) { _ in }
+            self.task?.send(.string(SignalingProtocol.ping)) { _ in }
         }
         timer.resume()
         pingTimer = timer
