@@ -8,7 +8,9 @@ struct LoginView: View {
     @State private var remember = true
     @State private var showPassword = false
     @State private var busy = false
+    @State private var status: String?
     @State private var error: String?
+    @State private var untrusted: UntrustedCertificateInfo?
     @State private var showRecent = false
 
     var body: some View {
@@ -58,6 +60,7 @@ struct LoginView: View {
                             Image(systemName: "person").foregroundStyle(.secondary)
                             TextField("用户名", text: $username)
                                 .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .submitLabel(.next)
                         }
                         .padding(12).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
@@ -65,8 +68,12 @@ struct LoginView: View {
                             Image(systemName: "lock").foregroundStyle(.secondary)
                             if showPassword {
                                 TextField("密码", text: $password)
+                                    .submitLabel(.go)
+                                    .onSubmit { Task { await doLogin() } }
                             } else {
                                 SecureField("密码", text: $password)
+                                    .submitLabel(.go)
+                                    .onSubmit { Task { await doLogin() } }
                             }
                             Button { showPassword.toggle() } label: {
                                 Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
@@ -76,20 +83,41 @@ struct LoginView: View {
 
                         Toggle("记住密码", isOn: $remember)
 
+                        if busy {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.blue)
+                                Text(status ?? "正在登录...").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         if let error {
-                            Text(error).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(error)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                         }
 
                         Button {
                             Task { await doLogin() }
                         } label: {
-                            if busy { ProgressView().tint(.white) }
-                            else { Text("登录").fontWeight(.semibold) }
+                            if busy {
+                                HStack(spacing: 8) {
+                                    ProgressView().tint(.white)
+                                    Text("正在登录...").fontWeight(.semibold)
+                                }
+                            } else {
+                                Text("登录").fontWeight(.semibold)
+                            }
                         }
                         .frame(maxWidth: .infinity).padding(14)
                         .background(Color.blue, in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(.white)
-                        .disabled(busy || server.isEmpty || username.isEmpty || password.isEmpty)
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
+                        .disabled(busy)
                     }
                     Spacer(minLength: 40)
                 }
@@ -97,6 +125,27 @@ struct LoginView: View {
             }
             .navigationTitle("登录")
             .onAppear { prefill() }
+            .onReceive(CertificateTrustNotification.publisher) { info in
+                untrusted = info
+                status = nil
+                error = "服务器证书未信任，请确认后重试"
+            }
+            .alert(
+                "服务器证书不受信任",
+                isPresented: Binding(
+                    get: { untrusted != nil },
+                    set: { if !$0 { untrusted = nil } }
+                ),
+                presenting: untrusted
+            ) { info in
+                Button("信任并继续登录") { trust(info) }
+                Button("取消", role: .cancel) {
+                    untrusted = nil
+                    error = "已取消：服务器证书未被信任"
+                }
+            } message: { info in
+                Text("服务器：\(info.endpointKey)\n证书：\(info.subject.isEmpty ? "未知" : info.subject)\nSHA-256：\(info.sha256)\n\n首次连接请核对指纹后信任；后续证书变更会再次提醒。")
+            }
         }
     }
 
@@ -108,18 +157,60 @@ struct LoginView: View {
         }
     }
 
+    @MainActor
     private func doLogin() async {
-        guard let endpoint = ServerEndpoint.parse(server) else {
-            error = "服务器地址格式不正确"; return
+        let serverText = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !serverText.isEmpty else {
+            error = "请输入服务器地址，例如 192.168.1.2:8443"; return
         }
-        busy = true; error = nil
-        defer { busy = false }
+        guard !user.isEmpty else {
+            error = "请输入用户名"; return
+        }
+        guard !password.isEmpty else {
+            error = "请输入密码"; return
+        }
+        guard let endpoint = ServerEndpoint.parse(serverText) else {
+            error = "服务器地址格式不正确，例如 192.168.1.2:8443"; return
+        }
+
+        busy = true
+        status = "正在连接 \(endpoint.display) ..."
+        error = nil
+        defer { busy = false; status = nil }
+
         do {
-            try await container.session.login(endpoint: endpoint, username: username, password: password)
-            if remember { container.session.savePassword(url: endpoint.serialize(), username: username, password: password) }
-            else { container.session.clearPassword(url: endpoint.serialize(), username: username) }
+            try await container.session.login(endpoint: endpoint, username: user, password: password)
+            if remember {
+                container.session.savePassword(url: endpoint.serialize(), username: user, password: password)
+            } else {
+                container.session.clearPassword(url: endpoint.serialize(), username: user)
+            }
+        } catch let apiError as ApiError {
+            if case .untrustedCertificate(let info) = apiError {
+                untrusted = info
+                self.error = "服务器证书未信任，请确认后重试"
+            } else {
+                self.error = apiError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    @MainActor
+    private func trust(_ info: UntrustedCertificateInfo) {
+        container.httpFactory.certificatePins.pin(
+            endpointKey: info.endpointKey,
+            sha256: info.sha256,
+            subject: info.subject
+        )
+        if let endpoint = ServerEndpoint.parse(server) {
+            container.httpFactory.invalidate(for: endpoint)
+        }
+        untrusted = nil
+        error = nil
+        Task { await doLogin() }
     }
 }

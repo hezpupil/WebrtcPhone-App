@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Combine
 
 /// URLSession + TOFU 证书信任代理。对齐 Android 端 HttpClientFactory / PinningTrustManager。
 /// 校验顺序：先系统 CA；失败时仅当叶子证书 SHA-256 与已固定值相等才放行（并校验有效期）。
@@ -68,6 +69,12 @@ enum CertificateTrustNotification {
     static let name = Notification.Name("CertificateTrustRequired")
     static func post(_ info: UntrustedCertificateInfo) {
         NotificationCenter.default.post(name: name, object: info)
+    }
+
+    static var publisher: AnyPublisher<UntrustedCertificateInfo, Never> {
+        NotificationCenter.default.publisher(for: name)
+            .compactMap { $0.object as? UntrustedCertificateInfo }
+            .eraseToAnyPublisher()
     }
 }
 
@@ -149,6 +156,16 @@ final class HttpClientFactory {
         let delegate = WebSocketSessionDelegate(pinStore: pinStore, endpointKey: endpoint.key)
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         return (session, delegate)
+    }
+
+    /// TOFU 确认后清掉旧 session，下一次请求使用已固定的证书策略。
+    func invalidate(for endpoint: ServerEndpoint) {
+        let httpKey = "\(endpoint.key)|\(endpoint.secure)"
+        let wsKey = "ws|\(endpoint.key)|\(endpoint.secure)"
+        lock.lock()
+        sessions.removeValue(forKey: httpKey)
+        sessions.removeValue(forKey: wsKey)
+        lock.unlock()
     }
 
     /// 暴露 pinStore 供 UI 做 TOFU 确认后写入指纹。

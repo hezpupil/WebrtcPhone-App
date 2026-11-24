@@ -1,7 +1,7 @@
 import Foundation
 
 /// 证书信息，对齐 Android 端 UntrustedCertificateInfo。
-struct UntrustedCertificateInfo: Equatable {
+struct UntrustedCertificateInfo: Equatable, Identifiable {
     let endpointKey: String
     let sha256: String
     let subject: String
@@ -9,6 +9,8 @@ struct UntrustedCertificateInfo: Equatable {
     let notAfter: Date
     /// true = 之前固定过但指纹变了（可能中间人 / 服务器换证书）
     let changed: Bool
+
+    var id: String { "\(endpointKey)|\(sha256)" }
 }
 
 /// 统一错误体系，对齐 Android 端 ApiException sealed class。
