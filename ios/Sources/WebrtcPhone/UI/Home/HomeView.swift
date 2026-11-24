@@ -11,7 +11,7 @@ struct HomeView: View {
                 .tabItem { Label("设备", systemImage: "rectangle.grid.2x2") }.tag(0)
             NavigationStack { ManageTab() }
                 .tabItem { Label("管理", systemImage: "slider.horizontal.3") }.tag(1)
-            NavigationStack { MeTab() }
+            NavigationStack { MeTab(onGoManage: { tab = 1 }) }
                 .tabItem { Label("我的", systemImage: "person.circle") }.tag(2)
         }
         .onChange(of: tab) { _ in
@@ -307,6 +307,8 @@ struct DeviceActionsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var alias = ""
     @State private var showDeleteConfirm = false
+    @State private var showLease = false
+    @State private var showTags = false
 
     var body: some View {
         NavigationStack {
@@ -315,6 +317,11 @@ struct DeviceActionsSheet: View {
                     Button(action: { dismiss(); onStream() }) {
                         Label("连接并投屏", systemImage: "play.rectangle.fill")
                     }.disabled(!device.online)
+                }
+                Section {
+                    Button(action: { showLease = true }) {
+                        Label("设备开租 / 租约管理", systemImage: "iphone")
+                    }
                 }
                 Section("设备信息") {
                     LabeledContent("设备 ID", value: device.id)
@@ -325,7 +332,7 @@ struct DeviceActionsSheet: View {
                 Section("备注") {
                     TextField("设备备注", text: $alias)
                     Button("保存备注") {
-                        Task { try? await scope.devices.setDeviceAlias(device.id, alias: alias) }
+                        Task { try? await scope.devices.setDeviceAlias(device.id, alias: alias); dismiss() }
                     }
                 }
                 Section {
@@ -341,6 +348,9 @@ struct DeviceActionsSheet: View {
                     Task { try? await scope.devices.deleteDevice(device.id); dismiss() }
                 }
                 Button("取消", role: .cancel) {}
+            }
+            .sheet(isPresented: $showLease) {
+                DeviceLeaseSheet(device: device).environmentObject(scope)
             }
         }
         .presentationDetents([.medium, .large])

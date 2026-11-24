@@ -38,7 +38,7 @@ struct StreamView: View {
     @ObservedObject var scope: UserScope
     @ObservedObject var container: AppContainer
 
-    @State private var renderer = RTCMTLVideoView()
+    @State private var rendererBox: RTCMTLVideoView?
     @State private var phase: ConnectionPhase = .signaling
     @State private var videoSize: (Int, Int)?
     @State private var stats = StreamStats()
@@ -48,6 +48,7 @@ struct StreamView: View {
     @State private var showKeybar = false
     @State private var errorMessage = ""
     @State private var viewOnly = false
+    @State private var connectedOnce = false
     @State private var orientation: UIInterfaceOrientationMask = .all
     @Environment(\.dismiss) private var dismiss
 
@@ -57,10 +58,12 @@ struct StreamView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            VideoRenderView(renderer: renderer)
-                .ignoresSafeArea()
-                .onTapGesture { withAnimation { showControls.toggle() } }
-                .gesture(touchGesture)
+            if let renderer = rendererBox {
+                VideoRenderView(renderer: renderer)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation { showControls.toggle() } }
+                    .gesture(touchGesture)
+            }
 
             // 顶部信息栏
             if showControls {
@@ -79,9 +82,14 @@ struct StreamView: View {
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         Menu {
-                            Button("切换画质") { showControls = true }
-                            Toggle("仅查看", isOn: $viewOnly)
-                            Button("重新连接") { restart() }
+                            Button { restart() } label: { Label("重新连接", systemImage: "arrow.clockwise") }
+                            Button {
+                                viewOnly.toggle()
+                                restart()
+                            } label: {
+                                Label(viewOnly ? "切换为完全控制" : "切换为仅观看", systemImage: "eye")
+                            }
+                            Button { dismiss() } label: { Label("结束投屏", systemImage: "stop.fill") }
                         } label: { Image(systemName: "ellipsis.circle") }
                     }
                     .padding().background(.ultraThinMaterial)
@@ -122,7 +130,9 @@ struct StreamView: View {
             if let terminal = session?.terminal.value { TerminalPanel(channel: terminal) }
         }
         .onAppear { connect() }
-        .onDisappear { scope.sessionManager?.detach(renderer) }
+        .onDisappear {
+            if let renderer = rendererBox { scope.sessionManager?.detach(renderer) }
+        }
     }
 
     private var phaseLabel: String {
@@ -140,6 +150,9 @@ struct StreamView: View {
 
     private func connect() {
         var target = makeTarget()
+        // Metal 视图只在首次进入时创建一次；避免 SwiftUI 结构体重建时反复创建 RTCMTLVideoView
+        if rendererBox == nil { rendererBox = RTCMTLVideoView() }
+        guard let renderer = rendererBox else { return }
         scope.sessionManager?.attach(renderer)
         let s = scope.sessionManager?.open(target)
         s?.phase.subscribe { p in Task { @MainActor in self.phase = p } }
@@ -162,7 +175,7 @@ struct StreamView: View {
     private var touchGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                guard let size = videoSize, let session else { return }
+                guard let size = videoSize, let session, let renderer = rendererBox else { return }
                 let mapper = TouchMapper(viewW: renderer.bounds.width, viewH: renderer.bounds.height,
                                          videoW: CGFloat(size.0), videoH: CGFloat(size.1))
                 guard let p = mapper.map(value.location, clamp: false) else { return }
@@ -170,7 +183,7 @@ struct StreamView: View {
                                         x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
             }
             .onEnded { value in
-                guard let size = videoSize, let session else { return }
+                guard let size = videoSize, let session, let renderer = rendererBox else { return }
                 let mapper = TouchMapper(viewW: renderer.bounds.width, viewH: renderer.bounds.height,
                                          videoW: CGFloat(size.0), videoH: CGFloat(size.1))
                 guard let p = mapper.map(value.location, clamp: true) else { return }

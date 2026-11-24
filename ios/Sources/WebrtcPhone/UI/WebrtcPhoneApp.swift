@@ -5,6 +5,8 @@ struct WebrtcPhoneApp: App {
     @StateObject private var container = AppContainer()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() { CrashReporter.install() }
+
     var body: some Scene {
         WindowGroup {
             RootView()
