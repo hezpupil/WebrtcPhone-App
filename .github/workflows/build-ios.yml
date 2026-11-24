@@ -84,6 +84,19 @@ jobs:
           cp "$ICONSET/AppIcon-1024.png" "$APP/AppIcon1024x1024.png"
           echo "Icons injected:"
           ls -1 "$APP"/AppIcon*.png
+          # 修正 Info.plist：XcodeGen 默认生成的 plist 缺失显示名/ATS/图标声明，用 plutil 补齐
+          plutil -replace CFBundleDisplayName -string '穿云投屏' "$APP/Info.plist"
+          plutil -replace CFBundleName -string '穿云投屏' "$APP/Info.plist"
+          plutil -replace CFBundleShortVersionString -string '0.4.5' "$APP/Info.plist"
+          plutil -replace NSAppTransportSecurity -dict "$APP/Info.plist"
+          plutil -replace NSAppTransportSecurity.NSAllowsArbitraryLoads -bool YES "$APP/Info.plist"
+          plutil -replace CFBundleIcons -dict "$APP/Info.plist"
+          plutil -replace CFBundleIcons.CFBundlePrimaryIcon -dict "$APP/Info.plist"
+          plutil -replace CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconFiles -array "$APP/Info.plist"
+          plutil -insert CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconFiles -string 'AppIcon60x60' "$APP/Info.plist"
+          plutil -insert CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconFiles -string 'AppIcon76x76' "$APP/Info.plist"
+          echo "Info.plist patched:"
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundleDisplayName|CFBundleShortVersion|CFBundleIconFiles|NSAllowsArbitrary'
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
