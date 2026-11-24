@@ -574,7 +574,7 @@ struct UserCard: View {
 
             // 状态胶囊组
             FlexibleChips(items: statusPills) { p in
-                StatusPill(text: p.0, color: p.1, filled: p.2)
+                StatusPill(text: p.text, color: p.color, filled: p.filled)
             }
 
             // 底部操作行
@@ -2274,7 +2274,7 @@ struct TaskBoard: View {
     @Environment(\.dismiss) private var dismiss
 
     private var subs: [SubTaskStatus] {
-        Array(scope.serverFiles.task?.devices.values ?? [])
+        Array((scope.serverFiles.task?.devices ?? [:]).values)
     }
     private var total: Int { subs.count }
     private var success: Int { subs.filter { $0.ok }.count }

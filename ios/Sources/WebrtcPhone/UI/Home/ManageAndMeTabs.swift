@@ -222,7 +222,8 @@ struct MeTab: View {
     private var leasesLine: some View {
         let leases = me?.leases ?? []
         if !leases.isEmpty {
-            let minRemain = leases.map { $0.remainingSeconds }.filter { $0 >= 0 }.min() ?? -1
+            let rems = leases.map { $0.remainingSeconds }.filter { $0 >= 0 }
+            let minRemain: Int64 = rems.min() ?? -1
             if minRemain >= 0 {
                 Text("设备租约 \(leases.count) 个，最近到期：\(Formatters.duration(minRemain))")
                     .font(.system(size: 12)).foregroundStyle(.secondary)

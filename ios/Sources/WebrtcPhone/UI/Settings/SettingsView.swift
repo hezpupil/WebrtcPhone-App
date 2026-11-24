@@ -30,7 +30,7 @@ struct StreamSettingsView: View {
                         Text(presetHint).font(.system(size: 12)).foregroundStyle(.secondary)
                         FlexibleChips(items: QualityPreset.allCases.filter { $0 != .custom }) { p in
                             FilterChip(text: presetDesc(p), selected: stream.preset == p) {
-                                container.settings.updateStream { $0 = $0.withPreset(p) }
+                                container.settings.updateStream { s in s = s.withPreset(p) }
                             }
                         }
                     }
@@ -42,7 +42,9 @@ struct StreamSettingsView: View {
                         sliderRow(label: "最大分辨率",
                                   valueText: stream.maxSize == 0 ? "原始" : "\(stream.maxSize)",
                                   value: Binding(get: { Double(stream.maxSize) },
-                                                 set: { v in container.settings.updateStream { $0.maxSize = snap($0, v) } }),
+                                                 set: { v in container.settings.updateStream { s in
+                                                     s.maxSize = snap(s.maxSize, v)
+                                                 } }),
                                   range: 0...2560, steps: [0, 480, 720, 1080, 1280, 1600, 1920, 2560],
                                   disabled: forbidden(\.forbidResolution))
                         sliderRow(label: "最大帧率",
@@ -134,7 +136,16 @@ struct StreamSettingsView: View {
                 Text(valueText).font(.system(size: 13)).foregroundStyle(.secondary)
             }
             if disabled {
-                ProgressView(value: value.wrappedValue, in: range).tint(.secondary)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(AppColors.surfaceContainerHigh)
+                        Rectangle().fill(Color.secondary.opacity(0.5))
+                            .frame(width: geo.size.width * CGFloat(
+                                (value.wrappedValue - range.lowerBound) / max(range.upperBound - range.lowerBound, 1)))
+                    }
+                }
+                .frame(height: 4)
+                .clipShape(Capsule())
             } else {
                 Slider(value: value, in: range).tint(AppColors.brand)
             }
@@ -170,28 +181,28 @@ struct AppSettingsView: View {
 
                 SectionCard(title: "投屏") {
                     VStack(spacing: 0) {
-                        switchRow("显示虚拟导航键", "在投屏画面下方展示安卓三键导航", app.showNavBar) {
-                            container.settings.updateApp { $0.showNavBar = $1 }
+                        switchRow("显示虚拟导航键", "在投屏画面下方展示安卓三键导航", app.showNavBar) { v in
+                            container.settings.updateApp { a in a.showNavBar = v }
                         }
                         Divider().padding(.leading, 14)
-                        switchRow("显示性能指标", "投屏时叠加显示帧率与延迟", app.showStats) {
-                            container.settings.updateApp { $0.showStats = $1 }
+                        switchRow("显示性能指标", "投屏时叠加显示帧率与延迟", app.showStats) { v in
+                            container.settings.updateApp { a in a.showStats = v }
                         }
                         Divider().padding(.leading, 14)
-                        switchRow("投屏时保持亮屏", nil, app.keepScreenOn) {
-                            container.settings.updateApp { $0.keepScreenOn = $1 }
+                        switchRow("投屏时保持亮屏", nil, app.keepScreenOn) { v in
+                            container.settings.updateApp { a in a.keepScreenOn = v }
                         }
                         Divider().padding(.leading, 14)
-                        switchRow("触控振动反馈", nil, app.haptics) {
-                            container.settings.updateApp { $0.haptics = $1 }
+                        switchRow("触控振动反馈", nil, app.haptics) { v in
+                            container.settings.updateApp { a in a.haptics = v }
                         }
                         Divider().padding(.leading, 14)
-                        switchRow("剪贴板双向同步", nil, app.clipboardSync) {
-                            container.settings.updateApp { $0.clipboardSync = $1 }
+                        switchRow("剪贴板双向同步", nil, app.clipboardSync) { v in
+                            container.settings.updateApp { a in a.clipboardSync = v }
                         }
                         Divider().padding(.leading, 14)
                         switchRow("断线自动重连", "最多自动重试 3 次", app.autoReconnect) { v in
-                            container.settings.updateApp { $0.autoReconnect = v }
+                            container.settings.updateApp { a in a.autoReconnect = v }
                             container.userScope?.sessionManager?.setAutoReconnect(v)
                         }
                     }
