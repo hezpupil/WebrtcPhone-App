@@ -215,7 +215,7 @@ private final class H264Decoder {
                         CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: nil,
                             parameterSetCount: 2,
-                            parameterSetPointers: pbuf.baseAddress,
+                            parameterSetPointers: pbuf.baseAddress!,
                             parameterSetSizes: sizes,
                             nalUnitHeaderLength: 4,
                             formatDescriptionOut: &self.formatDesc
