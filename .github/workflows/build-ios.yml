@@ -32,7 +32,7 @@ env:
 jobs:
   build:
     name: Archive & Package unsigned IPA
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout monorepo
         uses: actions/checkout@v4
