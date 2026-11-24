@@ -104,6 +104,7 @@ jobs:
         with:
           files: android/app/build/outputs/apk/**/*.apk
           generate_release_notes: true
+          overwrite_files: true
           append_body: true
           body: |
             ## Android 客户端

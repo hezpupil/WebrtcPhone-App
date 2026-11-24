@@ -94,6 +94,7 @@ jobs:
         with:
           files: ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
           generate_release_notes: true
+          overwrite_files: true
           append_body: true
           body: |
             ## iOS 客户端（未签名 IPA）
