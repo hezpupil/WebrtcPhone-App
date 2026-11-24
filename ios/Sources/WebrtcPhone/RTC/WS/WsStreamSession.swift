@@ -94,7 +94,7 @@ final class WsStreamSession: ObservableObject {
         }
         delegate.onClose = { [weak self] _, _ in
             guard let self, !self.closed else { return }
-            Task { @MainActor in self.phase = .failed("连接已断开", retryable: true) }
+            Task { @MainActor in self.phase = .failed(message: "连接已断开", retryable: true) }
         }
         let wsTask = session.webSocketTask(with: request)
         self.task = wsTask
@@ -141,14 +141,14 @@ final class WsStreamSession: ObservableObject {
                 self.receiveLoop()
             case .failure:
                 Task { @MainActor in
-                    if !self.closed { self.phase = .failed("连接已断开", retryable: true) }
+                    if !self.closed { self.phase = .failed(message: "连接已断开", retryable: true) }
                 }
             }
         }
     }
 
     private func sendText(_ text: String) {
-        task?.send(message: .string(text)) { _ in }
+        task?.send(.string(text)) { _ in }
     }
 
     private func sendControl(_ json: String) -> Bool {
@@ -210,8 +210,8 @@ private final class H264Decoder {
             let sizes = [sps.count, pps.count]
             let status: OSStatus = spsBytes.withUnsafeBufferPointer { sp in
                 ppsBytes.withUnsafeBufferPointer { pp in
-                    var pointers: [UnsafePointer<UInt8>?] = [sp.baseAddress, pp.baseAddress]
-                    return pointers.withUnsafeMutableBufferPointer { pbuf in
+                    let pointers: [UnsafePointer<UInt8>] = [sp.baseAddress!, pp.baseAddress!]
+                    return pointers.withUnsafeBufferPointer { pbuf in
                         CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: nil,
                             parameterSetCount: 2,
