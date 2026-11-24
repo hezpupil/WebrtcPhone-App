@@ -16,13 +16,17 @@ struct LoginView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 18) {
-                    Image(systemName: "iphone.and.arrow.forward")
-                        .font(.system(size: 64))
-                        .foregroundStyle(.blue)
-                    Text("穿云投屏").font(.title.bold())
+                VStack(spacing: 12) {
+                    Image("AppLogo")
+                        .resizable().scaledToFit()
+                        .frame(width: 80, height: 80)
+                    Text("穿云投屏").font(.system(size: 22, weight: .semibold))
                     Text("低延迟 · 随时随地控制你的云端设备")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
+                }
+                .padding(.top, 40)
+
+                VStack(spacing: 16) {
 
                     VStack(spacing: 12) {
                         HStack {
@@ -113,7 +117,7 @@ struct LoginView: View {
                             }
                         }
                         .frame(maxWidth: .infinity).padding(14)
-                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 12))
+                        .background(AppColors.brand, in: RoundedRectangle(cornerRadius: 14))
                         .foregroundStyle(.white)
                         .buttonStyle(.plain)
                         .contentShape(Rectangle())
@@ -123,6 +127,7 @@ struct LoginView: View {
                 }
                 .padding(24)
             }
+            .background(AppColors.background)
             .navigationTitle("登录")
             .onAppear { prefill() }
             .onReceive(CertificateTrustNotification.publisher) { info in

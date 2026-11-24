@@ -12,7 +12,7 @@ packages:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.webrtcphone.ios
-    MARKETING_VERSION: "0.5.0"
+    MARKETING_VERSION: "0.4.5"
     CURRENT_PROJECT_VERSION: 1
     SWIFT_VERSION: "5.10"
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
@@ -50,7 +50,6 @@ targets:
           - "$(inherited)"
           - "@executable_path/Frameworks"
     info:
-      path: Resources/Info.plist
       properties:
         CFBundleDisplayName: 穿云投屏
         CFBundleIdentifier: com.webrtcphone.ios

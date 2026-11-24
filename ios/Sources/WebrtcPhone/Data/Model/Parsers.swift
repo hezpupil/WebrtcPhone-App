@@ -3,11 +3,26 @@ import Foundation
 /// 容错 JSON 解析器。对齐 Android 端 data/model/Parsers.kt。
 /// 所有函数对缺失字段使用默认值，不抛异常。
 enum Parsers {
+    /// 对齐 Android JSONObject.optString：数字 / NSNull 都能安全转字符串
     private static func str(_ o: [String: Any], _ key: String, _ def: String = "") -> String {
-        o[key] as? String ?? def
+        guard let v = o[key], !(v is NSNull) else { return def }
+        if let s = v as? String { return s }
+        if let n = v as? NSNumber { return n.stringValue }
+        return def
     }
+    /// 对齐 Android JSONObject.optBoolean：bool / 数字(1/0) / 字符串(true/false) 均可
     private static func bool(_ o: [String: Any], _ key: String, _ def: Bool = false) -> Bool {
-        o[key] as? Bool ?? def
+        guard let v = o[key], !(v is NSNull) else { return def }
+        if let b = v as? Bool { return b }
+        if let n = v as? NSNumber { return n.boolValue }
+        if let s = v as? String {
+            switch s.lowercased() {
+            case "true", "1", "yes": return true
+            case "false", "0", "no": return false
+            default: return def
+            }
+        }
+        return def
     }
     private static func int(_ o: [String: Any], _ key: String, _ def: Int = 0) -> Int {
         if let n = o[key] as? NSNumber { return n.intValue }
