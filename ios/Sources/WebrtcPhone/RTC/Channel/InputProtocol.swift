@@ -49,10 +49,10 @@ final class InputProtocol {
         ])
     }
 
-    func key(_ keycode: Int, action: Int, repeat: Int = 0, meta: Int = 0) -> Bool {
+    func key(_ keycode: Int, action: Int, repeatTimes: Int = 0, meta: Int = 0) -> Bool {
         guard !viewOnly() else { return false }
         return send(["type": "inject_keycode", "action": action, "keycode": keycode,
-                     "repeat": repeat, "meta": meta])
+                     "repeat": repeatTimes, "meta": meta])
     }
 
     func press(_ keycode: Int, meta: Int = 0) -> Bool {
@@ -61,7 +61,7 @@ final class InputProtocol {
 
     func longPress(_ keycode: Int) -> Bool {
         guard key(keycode, action: 0) else { return false }
-        for i in 1...20 { _ = key(keycode, action: 0, repeat: i) }
+        for i in 1...20 { _ = key(keycode, action: 0, repeatTimes: i) }
         return key(keycode, action: 1)
     }
 
