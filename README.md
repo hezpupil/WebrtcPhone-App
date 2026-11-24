@@ -28,18 +28,25 @@
 | 流水线 | 触发标签 | Runner | 产物 |
 |---|---|---|---|
 | `build-android.yml` | `v*` / `android-*` | ubuntu-latest | debug + release APK |
-| `build-ios.yml` | `v*` / `ios-*` | macos-14 | 未签名 IPA |
+| `build-ios.yml` | `v*` / `ios-*` | macos-latest | 未签名 IPA |
 
 也可在 Actions 页面手动点 **Run workflow** 触发（不依赖标签）。
 
 ### 发布一个版本
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.4.5
+git push origin v0.4.5
 ```
 
 推送 `v*` 标签会同时触发双端构建；`android-*` / `ios-*` 前缀可单独构建某一端。
+
+### 版本同步规则
+
+- 版本号以 Android 上游 [`hqw700/WebrtcPhone-Android`](https://github.com/hqw700/WebrtcPhone-Android) 根目录 `VERSION` 文件为唯一准绳。
+- 当前上游版本为 `v0.4.5`，本仓库 `android/VERSION` 也为 `v0.4.5`。
+- 当上游 `VERSION` 升级时，先同步修改本仓库 `android/VERSION`，再推送同名 `v*` 标签发布；避免 Android/iOS 产物出现不同版本号。
+- 日常发布优先使用统一 `v*` 标签；`android-*` / `ios-*` 仅用于单端调试。
 
 ## Android 签名配置
 
