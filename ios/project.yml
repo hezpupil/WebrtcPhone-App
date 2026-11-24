@@ -50,19 +50,7 @@ targets:
           - "$(inherited)"
           - "@executable_path/Frameworks"
     info:
-      properties:
-        CFBundleDisplayName: 穿云投屏
-        CFBundleIdentifier: com.webrtcphone.ios
-        UILaunchScreen: {}
-        UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: false
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-        UIBackgroundModes:
-          - audio
-        UIRequiredDeviceCapabilities:
-          - arm64
-        ITSAppUsesNonExemptEncryption: false
+      path: Resources/Info.plist
 
   WebrtcPhoneTests:
     type: bundle.unit-test
