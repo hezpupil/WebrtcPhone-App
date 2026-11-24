@@ -32,8 +32,8 @@ final class StatsCalculator {
             rtt = num(pair.values["currentRoundTripTime"])
             if let localId = str(pair.values["localCandidateId"]),
                let local = map[localId] {
-                candidateType = str(local.values["candidateType"])
-                proto = str(local.values["protocol"])
+                candidateType = str(local.values["candidateType"]) ?? ""
+                proto = str(local.values["protocol"]) ?? ""
             }
             if let remoteId = str(pair.values["remoteCandidateId"]),
                let remote = map[remoteId], str(remote.values["candidateType"]) == "relay" {
@@ -72,7 +72,7 @@ final class StatsCalculator {
                 height: Int(integer(m["frameHeight"])), packetLossPct: max(0, loss),
                 jitterMs: Int(num(m["jitter"]) * 1000), decodeMs: max(0, decodeMs),
                 jitterBufferMs: max(0, jbMs), framesDropped: integer(m["framesDropped"]),
-                codec: codec, decoder: str(m["decoderImplementation"]),
+                codec: codec, decoder: str(m["decoderImplementation"]) ?? "",
                 candidateType: candidateType, protocolName: proto
             )
             lastTs = ts; lastBytes = bytes; lastFramesDecoded = framesDecoded

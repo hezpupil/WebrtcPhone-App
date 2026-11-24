@@ -104,7 +104,7 @@ final class DashboardSocket: ObservableObject {
                 self.pingTimer?.cancel()
                 let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "dash.ping"))
                 timer.schedule(deadline: .now() + 20, repeating: 20)
-                timer.setEventHandler { self.task?.send(.string("{\"type\":\"ping\"}")) { _ in } }
+                timer.setEventHandler { self.task?.send(message: .string("{\"type\":\"ping\"}")) { _ in } }
                 timer.resume()
                 self.pingTimer = timer
             }

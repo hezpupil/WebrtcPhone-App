@@ -16,7 +16,7 @@ private final class FrameSink: NSObject, RTCVideoRenderer {
 /// 对齐 Android 端 RtcSession.kt：所有状态变更与 PC/DC 生命周期都在单线程 queue 上执行。
 final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private let factory: RTCPeerConnectionFactory
-    private let target: StreamTarget
+    let target: StreamTarget
     private let httpFactory: HttpClientFactory
     private let queue = DispatchQueue(label: "webrtc.session", qos: .userInitiated)
     private let projectionResumeKey: String?
@@ -351,7 +351,7 @@ extension RtcSession: SignalingClient.Listener {
         guard let p = pc else { return }
         let pending = pendingCandidates
         pendingCandidates.removeAll()
-        for c in pending { p.addIceCandidate(c) { _ in } }
+        for c in pending { p.add(c) { _ in } }
     }
 
     private func addRemoteCandidate(_ c: CandidateSpec) {
@@ -359,7 +359,7 @@ extension RtcSession: SignalingClient.Listener {
                                   sdpMLineIndex: Int32(c.sdpMLineIndex),
                                   sdpMid: c.sdpMid ?? "0")
         if !remoteDescriptionSet { pendingCandidates.append(ice) }
-        else { pc?.addIceCandidate(ice) { _ in } }
+        else { pc?.add(ice) { _ in } }
     }
 
     // MARK: - RTCPeerConnectionDelegate（WebRTC 线程 → queue）
@@ -444,7 +444,7 @@ extension RtcSession: SignalingClient.Listener {
     private func attachTrack(_ track: RTCMediaStreamTrack) {
         guard attachedTracks.insert(track.trackId).inserted else { return }
         if let video = track as? RTCVideoTrack {
-            video.addRenderer(frameSink)
+            video.add(frameSink)
         } else if let audio = track as? RTCAudioTrack {
             audioTrack = audio
             audio.isEnabled = audioEnabled
@@ -497,12 +497,11 @@ final class StateSubject<T>: ObservableObject {
     private let lock = NSLock()
     private var current: T
     private var subscribers: [(T) -> Void] = []
-    let publisher: AnyStatePublisher<T>
 
-    init(_ initial: T) {
-        current = initial
-        publisher = AnyStatePublisher(subject: self)
-    }
+    init(_ initial: T) { current = initial }
+
+    /// 每次返回一个持有本 subject 的轻量句柄；subject 由 RtcSession 强持有，无循环引用。
+    var publisher: AnyStatePublisher<T> { AnyStatePublisher(subject: self) }
 
     var value: T { lock.lock(); defer { lock.unlock() }; return current }
 
@@ -521,7 +520,8 @@ final class StateSubject<T>: ObservableObject {
 }
 
 struct AnyStatePublisher<T> {
-    private weak var subject: StateSubject<T>?
+    private let subject: StateSubject<T>
     fileprivate init(subject: StateSubject<T>) { self.subject = subject }
-    func subscribe(_ handler: @escaping (T) -> Void) { subject?.subscribe(handler) }
+    var value: T { subject.value }
+    func subscribe(_ handler: @escaping (T) -> Void) { subject.subscribe(handler) }
 }

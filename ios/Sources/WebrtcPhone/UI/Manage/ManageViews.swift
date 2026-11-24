@@ -140,7 +140,7 @@ struct SharesView: View {
                         Button("生成") {
                             Task {
                                 let req = ShareCreateRequest(deviceId: deviceId, expireSeconds: hours * 3600,
-                                                              accessMode: .full, password: "", description: "",
+                                                              accessMode: AccessMode.full, password: "", description: "",
                                                               allowClipboard: true, allowFileTx: true, customCardCode: "")
                                 created = try? await scope.api.createShare(req)
                                 showCreate = false

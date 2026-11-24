@@ -58,7 +58,7 @@ struct SettingsView: View {
                     set: { v in container.settings.updateApp { $0.showStats = v } }))
                 Toggle("保持亮屏", isOn: Binding(
                     get: { container.settings.app.keepScreenOn },
-                    set: { container.settings.updateApp { $0.keepScreenOn = $1 } }))
+                    set: { v in container.settings.updateApp { $0.keepScreenOn = v } }))
             }
             Section("证书") {
                 NavigationLink { CertificatesView() } label: { Label("已信任证书", systemImage: "lock.shield") }

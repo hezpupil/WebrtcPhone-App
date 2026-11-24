@@ -1,7 +1,7 @@
 import Foundation
 
 /// 证书信息，对齐 Android 端 UntrustedCertificateInfo。
-struct UntrustedCertificateInfo {
+struct UntrustedCertificateInfo: Equatable {
     let endpointKey: String
     let sha256: String
     let subject: String

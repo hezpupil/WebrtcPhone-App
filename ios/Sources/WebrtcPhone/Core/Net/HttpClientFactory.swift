@@ -54,23 +54,10 @@ final class PinningSessionDelegate: NSObject, URLSessionDelegate {
     }
 
     private static func untrustedInfo(endpointKey: String, trust: SecTrust, leaf: SecCertificate?, fp: String, changed: Bool) -> UntrustedCertificateInfo {
-        var issuer = ""
-        var notAfter = Date.distantPast
-        if let leaf,
-           let cert = SecCertificateCopyValues(leaf, nil, nil) as? [CFString: Any],
-           let issuerData = cert[kSecCertificateOIDIssuer] as? [String: Any],
-           let line = issuerData[kSecPropertyKeyValue] as? String {
-            issuer = line
-        }
-        if let cfDates = SecTrustCopyProperties(trust) as? [[String: Any]] {
-            for prop in cfDates {
-                if let date = prop["notAfter" as String] as? Date { notAfter = date }
-            }
-        }
+        let subject = leaf.map(CertificatePinStore.subject) ?? ""
         return UntrustedCertificateInfo(
             endpointKey: endpointKey, sha256: fp,
-            subject: leaf.map(CertificatePinStore.subject) ?? "",
-            issuer: issuer, notAfter: notAfter, changed: changed
+            subject: subject, issuer: "", notAfter: Date.distantFuture, changed: changed
         )
     }
 

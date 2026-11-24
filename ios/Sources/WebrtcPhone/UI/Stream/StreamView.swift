@@ -142,9 +142,9 @@ struct StreamView: View {
         var target = makeTarget()
         scope.sessionManager?.attach(renderer)
         let s = scope.sessionManager?.open(target)
-        s?.phase.subscribe { [weak self] p in Task { @MainActor in self?.phase = p } }
-        s?.videoSize.subscribe { [weak self] v in Task { @MainActor in self?.videoSize = v } }
-        s?.stats.subscribe { [weak self] v in Task { @MainActor in self?.stats = v } }
+        s?.phase.subscribe { p in Task { @MainActor in self.phase = p } }
+        s?.videoSize.subscribe { v in Task { @MainActor in self.videoSize = v } }
+        s?.stats.subscribe { v in Task { @MainActor in self.stats = v } }
     }
 
     private func restart() { _ = scope.sessionManager?.restart(makeTarget()) }
@@ -153,7 +153,7 @@ struct StreamView: View {
         var t = StreamTarget(endpoint: scope.endpoint, deviceId: device.id,
                              deviceName: device.displayName, auth: .user(token: container.session.session?.token ?? ""))
         t.settings = container.settings.stream
-        t.accessMode = viewOnly ? .viewOnly : .full
+        t.accessMode = viewOnly ? AccessMode.viewOnly : AccessMode.full
         t.allowClipboard = container.settings.app.clipboardSync
         t.displayHint = videoSize
         return t

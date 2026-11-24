@@ -224,7 +224,7 @@ struct LeaseCreateRequest: Equatable {
 
 // MARK: - 服务器中转文件与任务
 
-struct ServerFile: Codable, Equatable, Identifiable {
+struct ServerFile: Codable, Equatable, Hashable, Identifiable {
     let name: String
     let size: Int64
     let updatedAt: Date

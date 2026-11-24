@@ -28,11 +28,6 @@ enum StreamTransport: String, Equatable {
     case websocket
 }
 
-enum AccessMode: String, Equatable {
-    case full = "full"
-    case viewOnly = "view_only"
-}
-
 // MARK: - 连接阶段
 
 enum ConnectionPhase: Equatable {
@@ -112,7 +107,7 @@ struct StreamTarget: Equatable {
         self.auth = auth
     }
 
-    var viewOnly: Bool { accessMode == .viewOnly }
+    var viewOnly: Bool { accessMode == AccessMode.viewOnly }
     var isGuest: Bool { if case .share = auth { return true }; return false }
     var isCamera: Bool { if case .camera = mode { return true }; return false }
     var isWs: Bool { transport == .websocket }

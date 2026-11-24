@@ -46,7 +46,7 @@ final class WsStreamSession: ObservableObject {
                 if !self.firstFrame {
                     self.firstFrame = true
                     self.phase = .connected
-                    if let s = size, self.videoSize == nil { self.videoSize = s }
+                    if let s = size, self.videoSize == nil { self.videoSize = (Int(s.width), Int(s.height)) }
                 }
                 self.frameCount += 1
             }
@@ -148,7 +148,7 @@ final class WsStreamSession: ObservableObject {
     }
 
     private func sendText(_ text: String) {
-        task?.send(.string(text)) { _ in }
+        task?.send(message: .string(text)) { _ in }
     }
 
     private func sendControl(_ json: String) -> Bool {
@@ -205,29 +205,33 @@ private final class H264Decoder {
             if type == 8 { pps = nalu; continue }
         }
         if session == nil, let sps, let pps {
-            let status = sps.withUnsafeBytes { sp in
-                pps.withUnsafeBytes { pp in
-                    CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                        allocator: nil,
-                        parameterSetCount: 2,
-                        parameterSetPointers: [sp.baseAddress!, pp.baseAddress!],
-                        parameterSetSizes: [sps.count, pps.count],
-                        nalUnitHeaderLength: 4,
-                        formatDescriptionOut: &formatDesc
-                    )
+            let spsBytes = [UInt8](sps)
+            let ppsBytes = [UInt8](pps)
+            let sizes = [sps.count, pps.count]
+            let status: OSStatus = spsBytes.withUnsafeBufferPointer { sp in
+                ppsBytes.withUnsafeBufferPointer { pp in
+                    var pointers: [UnsafePointer<UInt8>?] = [sp.baseAddress, pp.baseAddress]
+                    return pointers.withUnsafeMutableBufferPointer { pbuf in
+                        CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                            allocator: nil,
+                            parameterSetCount: 2,
+                            parameterSetPointers: pbuf.baseAddress,
+                            parameterSetSizes: sizes,
+                            nalUnitHeaderLength: 4,
+                            formatDescriptionOut: &self.formatDesc
+                        )
+                    }
                 }
             }
             guard status == noErr, let formatDesc else { return }
-            var attrs: [CFString: Any] = [
+            let dims = CMVideoFormatDescriptionGetDimensions(formatDesc)
+            let attrs: [CFString: Any] = [
                 kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
-                kCVPixelBufferWidthKey: Int(CMVideoFormatDescriptionGetDimensions(formatDesc).width),
-                kCVPixelBufferHeightKey: Int(CMVideoFormatDescriptionGetDimensions(formatDesc).height),
+                kCVPixelBufferWidthKey: Int(dims.width),
+                kCVPixelBufferHeightKey: Int(dims.height),
             ]
-            let cb: VTDecompressionOutputCallbackRecord = VTDecompressionOutputCallbackRecord(
-                decompressionOutputCallback: { _, _, status, _, imageBuffer, _, _ in
-                    guard status == noErr, let imageBuffer else { return }
-                    _ = imageBuffer
-                },
+            var cb = VTDecompressionOutputCallbackRecord(
+                decompressionOutputCallback: { _, _, _, _, _, _, _ in },
                 decompressionOutputRefCon: nil
             )
             VTDecompressionSessionCreate(allocator: nil, formatDescription: formatDesc,
@@ -258,7 +262,7 @@ private final class H264Decoder {
         if !reported, let formatDesc {
             reported = true
             let d = CMVideoFormatDescriptionGetDimensions(formatDesc)
-            firstFrame(CGSize(width: Int(d.width), height: Int(d.height)))
+            firstFrame?(CGSize(width: Int(d.width), height: Int(d.height)))
         }
     }
 

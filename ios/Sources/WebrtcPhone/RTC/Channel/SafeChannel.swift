@@ -17,7 +17,7 @@ final class SafeChannel: NSObject, RTCDataChannelDelegate {
         self.channel.delegate = self
     }
 
-    var label: String { channel.channelLabel }
+    var label: String { channel.label }
 
     var isOpen: Bool {
         lock.lock(); defer { lock.unlock() }

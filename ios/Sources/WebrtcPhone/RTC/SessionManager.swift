@@ -111,7 +111,7 @@ final class SessionManager: ObservableObject {
         s.phase.subscribe { [weak self] phase in
             Task { @MainActor in
                 guard let self, self.session === s, !Task.isCancelled else { return }
-                if phase == .connected { self.retry = 0 }
+                if phase == ConnectionPhase.connected { self.retry = 0 }
                 if case .failed(_, let retryable, _) = phase,
                    retryable, self.autoReconnect, self.renderer != nil, self.retry < 3 {
                     let attempt = self.retry + 1
