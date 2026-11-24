@@ -4,9 +4,6 @@ on:
   push:
     branches: [main]
     tags: ['v*', 'ios-*']
-    paths:
-      - 'ios/**'
-      - '.github/workflows/build-ios.yml'
   pull_request:
     branches: [main]
     paths:

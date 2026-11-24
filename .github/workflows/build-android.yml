@@ -4,9 +4,6 @@ on:
   push:
     branches: [main]
     tags: ['v*', 'android-*']
-    paths:
-      - 'android/**'
-      - '.github/workflows/build-android.yml'
   pull_request:
     branches: [main]
     paths:
