@@ -166,7 +166,10 @@ struct DevicesTab: View {
             DeviceActionsSheet(device: device, onStream: { linkDevice = device })
         }
         .fullScreenCover(item: $linkDevice) { device in
+            // 独立投屏页（对齐 Android StreamActivity 全屏 Activity）：
+            // 禁止手势下拉关闭，只能通过页内"返回"或"结束投屏"退出
             StreamView(device: device, scope: scope, container: container)
+                .interactiveDismissDisabled(true)
         }
         .refreshable { await scope.devices.refresh() }
     }

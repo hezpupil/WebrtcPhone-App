@@ -55,11 +55,12 @@ final class StatsCalculator {
             let lost = integer(m["packetsLost"])
             let recv = integer(m["packetsReceived"])
             let dt = ts - lastTs
-            let bitrate = (lastTs > 0 && dt > 0) ? (bytes - lastBytes) * 8 / Int64(dt) : 0
+            let dtSafe = dt.isFinite && dt > 0 ? dt : 0
+            let bitrate = (lastTs > 0 && dtSafe > 0) ? (bytes - lastBytes) * 8 / safeInt64(dtSafe) : 0
             let dFrames = framesDecoded - lastFramesDecoded
-            let decodeMs = dFrames > 0 ? Int((decodeTime - lastDecodeTime) / Double(dFrames) * 1000) : 0
+            let decodeMs = dFrames > 0 ? safeInt((decodeTime - lastDecodeTime) / Double(dFrames) * 1000) : 0
             let dEmitted = jbEmitted - lastJbEmitted
-            let jbMs = dEmitted > 0 ? Int((jbDelay - lastJbDelay) / Double(dEmitted) * 1000) : 0
+            let jbMs = dEmitted > 0 ? safeInt((jbDelay - lastJbDelay) / Double(dEmitted) * 1000) : 0
             let dLost = lost - lastPacketsLost
             let dRecv = recv - lastPacketsRecv
             let loss = (dLost + dRecv) > 0 ? Float(dLost) * 100 / Float(dLost + dRecv) : 0
@@ -67,10 +68,10 @@ final class StatsCalculator {
                 codec = mime.split(separator: "/").last.map(String.init) ?? ""
             }
             out = StreamStats(
-                rttMs: out.rttMs, fps: Int(num(m["framesPerSecond"])),
-                bitrateBps: max(0, bitrate), width: Int(integer(m["frameWidth"])),
-                height: Int(integer(m["frameHeight"])), packetLossPct: max(0, loss),
-                jitterMs: Int(num(m["jitter"]) * 1000), decodeMs: max(0, decodeMs),
+                rttMs: safeInt(rtt * 1000), fps: safeInt(num(m["framesPerSecond"])),
+                bitrateBps: max(0, bitrate), width: safeInt(Double(integer(m["frameWidth"]))),
+                height: safeInt(Double(integer(m["frameHeight"]))), packetLossPct: max(0, loss),
+                jitterMs: safeInt(num(m["jitter"]) * 1000), decodeMs: max(0, decodeMs),
                 jitterBufferMs: max(0, jbMs), framesDropped: integer(m["framesDropped"]),
                 codec: codec, decoder: str(m["decoderImplementation"]) ?? "",
                 candidateType: candidateType, protocolName: proto
@@ -79,7 +80,7 @@ final class StatsCalculator {
             lastDecodeTime = decodeTime; lastJbDelay = jbDelay; lastJbEmitted = jbEmitted
             lastPacketsLost = lost; lastPacketsRecv = recv
         }
-        out.rttMs = Int(rtt * 1000)
+        out.rttMs = safeInt(rtt * 1000)
         out.candidateType = candidateType
         out.protocolName = proto
         if !codec.isEmpty { out.codec = codec }
@@ -91,6 +92,10 @@ final class StatsCalculator {
         if let s = v as? String { return Double(s) ?? 0 }
         return 0
     }
+    /// getStats 的 jitter/framesPerSecond 等字段可能返回 NaN/Infinity，
+    /// Swift 的 Int(Double) 遇到非有限值会直接 trap（SIGTRAP），必须防御
+    private func safeInt(_ v: Double) -> Int { v.isFinite ? Int(v) : 0 }
+    private func safeInt64(_ v: Double) -> Int64 { v.isFinite ? Int64(v) : 0 }
     private func integer(_ v: Any?) -> Int64 {
         if let n = v as? NSNumber { return n.int64Value }
         if let s = v as? String { return Int64(s) ?? 0 }
