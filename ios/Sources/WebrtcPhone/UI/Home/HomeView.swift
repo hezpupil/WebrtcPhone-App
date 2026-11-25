@@ -77,6 +77,17 @@ struct DevicesTab: View {
     }
 
     var body: some View {
+        // 独立投屏页（对齐 Android StreamActivity）：条件渲染直接替换整个视图树，
+        // 不经过 sheet/cover 层级——没有下拉手势、不会"浮在页面上"，
+        // 只能通过投屏页内的"返回"或"结束投屏"退出
+        if let device = linkDevice {
+            StreamView(device: device, scope: scope, container: container) { linkDevice = nil }
+        } else {
+            mainTab
+        }
+    }
+
+    private var mainTab: some View {
         VStack(spacing: 0) {
             // 筛选条（对齐 Android FilterRow）
             ScrollView(.horizontal, showsIndicators: false) {
@@ -164,12 +175,6 @@ struct DevicesTab: View {
         }
         .sheet(item: $selected) { device in
             DeviceActionsSheet(device: device, onStream: { linkDevice = device })
-        }
-        .fullScreenCover(item: $linkDevice) { device in
-            // 独立投屏页（对齐 Android StreamActivity 全屏 Activity）：
-            // 禁止手势下拉关闭，只能通过页内"返回"或"结束投屏"退出
-            StreamView(device: device, scope: scope, container: container)
-                .interactiveDismissDisabled(true)
         }
         .refreshable { await scope.devices.refresh() }
     }

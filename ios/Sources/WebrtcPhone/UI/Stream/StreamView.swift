@@ -37,6 +37,8 @@ struct StreamView: View {
     let device: Device
     @ObservedObject var scope: UserScope
     @ObservedObject var container: AppContainer
+    /// 独立投屏页的关闭回调（条件渲染替换视图树时由宿主提供）
+    var onClose: (() -> Void)? = nil
 
     @State private var rendererBox: RTCMTLVideoView?
     @State private var phase: ConnectionPhase = .signaling
@@ -54,6 +56,11 @@ struct StreamView: View {
 
     private var session: RtcSession? { scope.sessionManager?.session }
 
+    /// 退出投屏页：条件渲染模式下回调宿主关闭，presentation 模式回退 dismiss
+    private func closePage() {
+        if let onClose { onClose() } else { dismiss() }
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -69,7 +76,7 @@ struct StreamView: View {
             if showControls {
                 VStack {
                     HStack {
-                        Button { scope.sessionManager?.close(endProjection: true); dismiss() } label: {
+                        Button { scope.sessionManager?.close(endProjection: true); closePage() } label: {
                             Image(systemName: "chevron.left").font(.title2)
                         }
                         VStack(alignment: .leading) {
@@ -89,7 +96,7 @@ struct StreamView: View {
                             } label: {
                                 Label(viewOnly ? "切换为完全控制" : "切换为仅观看", systemImage: "eye")
                             }
-                            Button { dismiss() } label: { Label("结束投屏", systemImage: "stop.fill") }
+                            Button { closePage() } label: { Label("结束投屏", systemImage: "stop.fill") }
                         } label: { Image(systemName: "ellipsis.circle") }
                     }
                     .padding().background(.ultraThinMaterial)
@@ -111,7 +118,7 @@ struct StreamView: View {
                     if retryable {
                         Button("重试") { restart() }.buttonStyle(.borderedProminent)
                     }
-                    Button("关闭") { dismiss() }
+                    Button("关闭") { closePage() }
                 }
                 .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             } else if phase != .connected {
