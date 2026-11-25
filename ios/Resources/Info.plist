@@ -32,6 +32,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- WebRTC 音频单元（VPIO）初始化会访问麦克风输入；缺失此声明会在连接时被 TCC 直接 abort -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>投屏时需要接收设备的声音，系统要求声明麦克风用途。</string>
+	<!-- iOS 14+ 访问局域网内设备（WebRTC ICE 直连 192.168.x.x）需要本地网络权限 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>需要访问本地网络以直连局域网内的设备进行投屏与控制。</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
