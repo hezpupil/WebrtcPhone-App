@@ -132,6 +132,10 @@ struct StreamView: View {
         .onAppear {
             // 对齐 Android：投屏期间停掉设备大盘轮询/快照拉取，避免与视频流抢带宽
             scope.devices.setActive(false)
+            if container.settings.stream.audio {
+                // 用户想开声音：从未询问过权限时先触发一次系统弹窗（授予后下次连接生效）
+                RtcSession.requestMicPermissionIfNeeded()
+            }
             connect()
         }
         .onDisappear {

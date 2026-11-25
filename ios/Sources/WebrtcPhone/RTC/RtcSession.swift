@@ -1,5 +1,6 @@
 import Foundation
 import WebRTC
+import AVFoundation
 
 // 便捷埋点
 private func trail(_ event: String) { Trail.mark(event) }
@@ -331,9 +332,22 @@ extension RtcSession: SignalingClient.Listener {
         }
     }
 
-    private func onRemoteOffer(_ sdp: String) {
+    private func onRemoteOffer(_ sdpRaw: String) {
         guard let p = pc else { return }
         trail("pc:offer-received")
+        // 音频决策：WebRTC 在应用含音频的 answer 时会初始化音频模块（VPIO），
+        // 需要麦克风权限——TrollStore/侧载环境 TCC 弹窗不显示，会永久卡死或 abort。
+        // 权限未授予时从 SDP 剔除音频段，WebRTC 便完全不会初始化音频模块。
+        let sdp: String
+        if target.settings.audio && Self.micPermissionGranted {
+            trail("audio:on")
+            sdp = sdpRaw
+        } else {
+            trail(target.settings.audio ? "audio:downgrade-mic-permission" : "audio:off-by-setting")
+            let cleaned = Self.stripAudioSections(sdpRaw)
+            trail(cleaned == sdpRaw ? "audio:no-audio-in-offer" : "audio:stripped")
+            sdp = cleaned
+        }
         phaseSubject.send(.negotiating)
         setRemoteDescription(sdp, type: .offer) { [weak self] in
             guard let self else { return }
@@ -349,6 +363,54 @@ extension RtcSession: SignalingClient.Listener {
                 }
             }
         }
+    }
+
+    /// 若麦克风权限从未询问，异步触发一次系统权限弹窗（不阻塞当前连接）；
+    /// 授予后下次连接即可带上音频。TrollStore/侧载环境弹窗不出现，本次连接
+    /// 仍按无音频降级进行，不会卡死。
+    static func requestMicPermissionIfNeeded() {
+        if #available(iOS 17.0, *) {
+            guard AVAudioApplication.shared.recordPermission == .undetermined else { return }
+            AVAudioApplication.requestRecordPermission { _ in }
+        } else {
+            guard AVAudioSession.sharedInstance().recordPermission == .undetermined else { return }
+            AVAudioSession.sharedInstance().requestRecordPermission { _ in }
+        }
+    }
+
+    /// 系统麦克风权限是否已授予（iOS 17 起用 AVAudioApplication）
+    private static var micPermissionGranted: Bool {
+        if #available(iOS 17.0, *) {
+            return AVAudioApplication.shared.recordPermission == .granted
+        }
+        return AVAudioSession.sharedInstance().recordPermission == .granted
+    }
+
+    /// 从 SDP 中移除音频 m-line 段（含 BUNDLE 清理），用于无音频降级连接。
+    private static func stripAudioSections(_ sdp: String) -> String {
+        guard sdp.contains("m=audio") else { return sdp }
+        let lines = sdp.components(separatedBy: "\r\n").filter { !$0.isEmpty }
+        var audioMids = Set<String>()
+        var skip = false
+        for line in lines {
+            if line.hasPrefix("m=") { skip = line.hasPrefix("m=audio") }
+            if skip, line.hasPrefix("a=mid:") {
+                audioMids.insert(String(line.dropFirst(6)))
+            }
+        }
+        var out: [String] = []
+        skip = false
+        for line in lines {
+            if line.hasPrefix("m=") { skip = line.hasPrefix("m=audio") }
+            if skip { continue }
+            if line.hasPrefix("a=group:BUNDLE") {
+                let kept = line.split(separator: " ").filter { !audioMids.contains(String($0)) }
+                out.append(kept.joined(separator: " "))
+            } else {
+                out.append(line)
+            }
+        }
+        return out.joined(separator: "\r\n") + "\r\n"
     }
 
     private func setRemoteDescription(_ sdp: String, type: RTCSdpType, done: @escaping () -> Void) {

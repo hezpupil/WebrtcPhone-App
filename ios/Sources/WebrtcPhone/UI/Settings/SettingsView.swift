@@ -81,7 +81,7 @@ struct StreamSettingsView: View {
                                              set: { v in container.settings.updateStream { $0.audio = v } })) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("传输声音 (Opus)").font(.system(size: 14))
-                                Text("关闭可节省约 128Kbps 带宽").font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text("关闭可节省约 128Kbps 带宽；TrollStore/侧载安装请保持关闭（开启需要麦克风权限，否则投屏无法建立）").font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                         }.tint(AppColors.brand)
                         .disabled(forbidden(\.forbidAudio))

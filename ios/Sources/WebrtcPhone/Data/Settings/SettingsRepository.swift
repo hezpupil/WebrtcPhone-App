@@ -52,7 +52,9 @@ struct StreamSettings: Codable, Equatable {
     var bwe = true
     var minBitrateMbps = 1
     var maxBitrateMbps = 20
-    var audio = true
+    // 默认关闭：WebRTC 音频模块初始化需要麦克风权限，
+    // TrollStore/侧载安装的环境下 TCC 弹窗不显示会导致连接永久卡死（或直接 abort）
+    var audio = false
     var powerOff = false
 
     func withPreset(_ p: QualityPreset) -> StreamSettings {
@@ -103,6 +105,12 @@ final class SettingsRepository: ObservableObject {
         s.bwe = defaults.object(forKey: "s_bwe") as? Bool ?? s.bwe
         s.minBitrateMbps = defaults.object(forKey: "s_min_bitrate") as? Int ?? s.minBitrateMbps
         s.maxBitrateMbps = defaults.object(forKey: "s_max_bitrate") as? Int ?? s.maxBitrateMbps
+        // 一次性迁移：旧版本默认开启音频，而 TrollStore/侧载环境开启音频会导致
+        // 连接卡死（TCC 麦克风弹窗不显示），存量默认值统一重置为关闭
+        if defaults.object(forKey: "s_audio_micfix") == nil {
+            defaults.set(false, forKey: "s_audio")
+            defaults.set(true, forKey: "s_audio_micfix")
+        }
         s.audio = defaults.object(forKey: "s_audio") as? Bool ?? s.audio
         s.powerOff = defaults.object(forKey: "s_power_off") as? Bool ?? s.powerOff
         self.stream = s
