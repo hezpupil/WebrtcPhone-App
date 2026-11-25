@@ -53,6 +53,10 @@ final class UserScope: ObservableObject {
     @Published private(set) var dashboard: DashboardSocket!
     @Published private(set) var sessionManager: SessionManager?
 
+    // 子 Repository 的 @Published 不会自动冒泡到父 ObservableObject，
+    // 必须显式转发，否则设备列表/统计等 UI 在数据到达时不刷新
+    private var bubbleBag: Set<AnyCancellable> = []
+
     init(session: AuthSession, api: CloudPhoneApi, httpFactory: HttpClientFactory,
          endpoint: ServerEndpoint, settings: SettingsRepository) {
         self.session = session
@@ -69,6 +73,16 @@ final class UserScope: ObservableObject {
         self.serverFiles = ServerFileRepository(api: api, endpoint: endpoint)
         self.sessionManager = SessionManager(engine: .shared, httpFactory: httpFactory)
         sessionManager?.setAutoReconnect(settings.app.autoReconnect)
+        for child in [devices.map { $0 as ObservableObject },
+                      quickTexts.map { $0 as ObservableObject },
+                      serverFiles.map { $0 as ObservableObject },
+                      dashboard.map { $0 as ObservableObject }] {
+            guard let c = child else { continue }
+            c.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &bubbleBag)
+        }
+        sessionManager.map { $0.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &bubbleBag) }
     }
 
     func close() {

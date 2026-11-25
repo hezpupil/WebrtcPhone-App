@@ -122,6 +122,10 @@ jobs:
               <key>NSAllowsArbitraryLoads</key>
               <true/>
             </dict>
+            <key>NSMicrophoneUsageDescription</key>
+            <string>投屏时接收并播放设备声音需要使用麦克风（WebRTC 音频单元）</string>
+            <key>NSLocalNetworkUsageDescription</key>
+            <string>与局域网内的云手机设备建立 WebRTC 直连需要访问本地网络</string>
             <key>UIBackgroundModes</key>
             <array><string>audio</string></array>
             <key>UIRequiredDeviceCapabilities</key>
@@ -159,11 +163,29 @@ jobs:
           path: ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
           if-no-files-found: error
 
+      - name: Zip dSYM (crash symbolication)
+        run: |
+          if [ -d "$RUNNER_TEMP/WebrtcPhone.xcarchive/dSYMs" ]; then
+            cd "$RUNNER_TEMP" && zip -qry WebrtcPhone-dSYM.zip WebrtcPhone.xcarchive/dSYMs
+            ls -lh WebrtcPhone-dSYM.zip
+          else
+            echo "No dSYMs in archive (DEBUG_INFORMATION_FORMAT not dwarf-with-dsym)" >&2
+          fi
+
+      - name: Upload dSYM artifact (crash symbolication)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebrtcPhone-iOS-dSYM
+          path: ${{ runner.temp }}/WebrtcPhone-dSYM.zip
+          if-no-files-found: warning
+
       - name: Publish to GitHub Release (on v* / ios-* tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
+          files: |
+            ${{ runner.temp }}/WebrtcPhone-unsigned.ipa
+            ${{ runner.temp }}/WebrtcPhone-dSYM.zip
           generate_release_notes: true
           overwrite_files: true
           append_body: true

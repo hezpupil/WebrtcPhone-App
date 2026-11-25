@@ -90,6 +90,8 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
 
     private var audioEnabled = true
     private var audioTrack: RTCAudioTrack?
+    private var videoTrack: RTCVideoTrack?
+    private var frameCount = 0
 
     private static let connectTimeout: TimeInterval = 25
     private static let firstFrameTimeout: TimeInterval = 15
@@ -107,7 +109,19 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     }
 
     func setRenderer(_ renderer: RTCVideoRenderer?) {
-        frameLock.lock(); self.renderer = renderer; frameLock.unlock()
+        frameLock.lock()
+        let old = self.renderer
+        self.renderer = renderer
+        frameLock.unlock()
+        guard old !== renderer else { return }
+        // 渲染器直接注册为 track sink（对齐 Android addSink），不经过中转
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let v = self.videoTrack {
+                if let old, old !== renderer { v.remove(old) }
+                if let renderer { v.add(renderer) }
+            }
+        }
     }
 
     func setAudioEnabled(_ enabled: Bool) {
@@ -178,6 +192,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
         agentChannels.removeAll()
         inputChannel = nil; clipboardChannel = nil; fileChannel = nil; adbChannel = nil
         audioTrack = nil
+        videoTrack = nil
         pc?.close(); pc = nil
         phaseSubject.send(final)
     }
@@ -357,6 +372,7 @@ extension RtcSession: SignalingClient.Listener {
                 if let error { self.post { self.fail("SDP 协商失败：\(error.localizedDescription)", retryable: true) }; return }
                 guard let answer else { self.post { self.fail("SDP 协商失败：无法生成应答", retryable: true) }; return }
                 trail("pc:answer-created")
+                Self.trailAnswerVideoCodecs(answer.sdp)
                 p.setLocalDescription(answer) { error in
                     if let error { self.post { self.fail("SDP 协商失败：\(error.localizedDescription)", retryable: true) }; return }
                     self.post { self.signaling?.send(SignalingProtocol.answer(self.target.deviceId, sdp: answer.sdp)); trail("sig:answer-sent") }
@@ -386,9 +402,23 @@ extension RtcSession: SignalingClient.Listener {
         return AVAudioSession.sharedInstance().recordPermission == .granted
     }
 
+    /// 埋点 answer SDP 的视频编码器（诊断黑屏：看 H264 是否真的协商成功）
+    private static func trailAnswerVideoCodecs(_ sdp: String) {
+        var inVideo = false
+        var lines: [String] = []
+        for line in sdp.components(separatedBy: "\r\n") {
+            if line.hasPrefix("m=") { inVideo = line.hasPrefix("m=video") }
+            if inVideo {
+                if line.hasPrefix("m=video") || (line.hasPrefix("a=rtpmap:") && (line.contains("H264") || line.contains("VP8") || line.contains("VP9") || line.contains("AV1"))) {
+                    lines.append(line)
+                }
+            }
+        }
+        trail("sdp:video-codecs " + lines.joined(separator: " | "))
+    }
+
     /// 从 SDP 中移除音频 m-line 段（含 BUNDLE 清理），用于无音频降级连接。
-    private static func stripAudioSections(_ sdp: String) -> String {
-        guard sdp.contains("m=audio") else { return sdp }
+    private static func stripAudioSections(_ sdp: String) -> String {        guard sdp.contains("m=audio") else { return sdp }
         let lines = sdp.components(separatedBy: "\r\n").filter { !$0.isEmpty }
         var audioMids = Set<String>()
         var skip = false
@@ -514,11 +544,20 @@ extension RtcSession: SignalingClient.Listener {
             }
         }
         if statsTimer == nil {
+            var statTicks = 0
             statsTimer = scheduleRepeating(seconds: 1) { [weak self] in
                 guard let self, !self.closed, let p = self.pc else { return }
                 p.statistics { [weak self] report in
                     guard let self, !self.closed else { return }
-                    self.post { self.statsSubject.send(self.statsCalc.compute(report)) }
+                    self.post {
+                        let s = self.statsCalc.compute(report)
+                        self.statsSubject.send(s)
+                        statTicks += 1
+                        // 诊断黑屏：周期记录解码器状态（fd=已解码帧 bytes=已收字节 dec=解码器实现）
+                        if statTicks % 3 == 0 {
+                            trail("stats: fps=\(s.fps) kbps=\(s.bitrateBps / 1000) \(s.width)x\(s.height) dec='\(s.decoder)' codec='\(s.codec)'")
+                        }
+                    }
                 }
             }
         }
@@ -528,7 +567,10 @@ extension RtcSession: SignalingClient.Listener {
         guard attachedTracks.insert(track.trackId).inserted else { return }
         if let video = track as? RTCVideoTrack {
             trail("track:attached video id=\(track.trackId)")
+            videoTrack = video
             video.add(frameSink)
+            frameLock.lock(); let r = self.renderer; frameLock.unlock()
+            if let r { video.add(r) }
         } else if let audio = track as? RTCAudioTrack {
             trail("track:attached audio")
             audioTrack = audio
@@ -537,6 +579,10 @@ extension RtcSession: SignalingClient.Listener {
     }
 
     fileprivate func onVideoFrame(_ frame: RTCVideoFrame) {
+        frameCount += 1
+        if frameCount == 1 || frameCount % 300 == 0 {
+            trail("frame:cb n=\(frameCount) \(frame.width)x\(frame.height) rot=\(Int(frame.rotation.rawValue))")
+        }
         let rotation = Int(frame.rotation.rawValue)
         let swapped = rotation == 90 || rotation == 270
         let w = Int(swapped ? frame.height : frame.width)
@@ -552,14 +598,6 @@ extension RtcSession: SignalingClient.Listener {
             trail("video:first \(w)x\(h) rot=\(rotation)")
             firstFrameSubject.send(true)
             firstFrameTimer?.cancel(); firstFrameTimer = nil
-        }
-        frameLock.lock(); let r = renderer; frameLock.unlock()
-        guard let r else { return }
-        // RTCMTLVideoView 是 UI 视图：统一在主线程渲染，避免 Metal 层跨线程访问
-        if Thread.isMainThread {
-            r.renderFrame(frame)
-        } else {
-            DispatchQueue.main.async { r.renderFrame(frame) }
         }
     }
 
