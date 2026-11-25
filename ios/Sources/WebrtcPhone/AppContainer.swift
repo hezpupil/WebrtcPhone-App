@@ -73,16 +73,11 @@ final class UserScope: ObservableObject {
         self.serverFiles = ServerFileRepository(api: api, endpoint: endpoint)
         self.sessionManager = SessionManager(engine: .shared, httpFactory: httpFactory)
         sessionManager?.setAutoReconnect(settings.app.autoReconnect)
-        for child in [devices.map { $0 as ObservableObject },
-                      quickTexts.map { $0 as ObservableObject },
-                      serverFiles.map { $0 as ObservableObject },
-                      dashboard.map { $0 as ObservableObject }] {
-            guard let c = child else { continue }
-            c.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-                .store(in: &bubbleBag)
-        }
-        sessionManager.map { $0.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &bubbleBag) }
+        devices.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bubbleBag)
+        quickTexts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bubbleBag)
+        serverFiles.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bubbleBag)
+        dashboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bubbleBag)
+        sessionManager?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bubbleBag)
     }
 
     func close() {
