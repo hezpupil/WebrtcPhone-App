@@ -129,8 +129,13 @@ struct StreamView: View {
         .sheet(isPresented: $showTerminal) {
             if let terminal = session?.terminal.value { TerminalPanel(channel: terminal) }
         }
-        .onAppear { connect() }
+        .onAppear {
+            // 对齐 Android：投屏期间停掉设备大盘轮询/快照拉取，避免与视频流抢带宽
+            scope.devices.setActive(false)
+            connect()
+        }
         .onDisappear {
+            scope.devices.setActive(true)
             if let renderer = rendererBox { scope.sessionManager?.detach(renderer) }
         }
     }

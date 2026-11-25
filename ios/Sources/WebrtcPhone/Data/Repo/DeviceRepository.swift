@@ -23,6 +23,7 @@ final class DeviceRepository: ObservableObject {
     private let session: AuthSession
     private let api: CloudPhoneApi
     private let socket: DashboardSocket
+    private let httpFactory: HttpClientFactory
     private var activeTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var socketCancellable: AnyCancellable?
@@ -31,10 +32,12 @@ final class DeviceRepository: ObservableObject {
     private var etags: [String: String] = [:]
     private let snapshotSemaphore = AsyncSemaphore(limit: 3)
 
-    init(session: AuthSession, api: CloudPhoneApi, socket: DashboardSocket) {
+    init(session: AuthSession, api: CloudPhoneApi, socket: DashboardSocket,
+         httpFactory: HttpClientFactory) {
         self.session = session
         self.api = api
         self.socket = socket
+        self.httpFactory = httpFactory
     }
 
     var isAdmin: Bool { session.role == "admin" }
@@ -146,7 +149,10 @@ final class DeviceRepository: ObservableObject {
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
         if let etag = etags[deviceId] { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            // 必须走带 TOFU 证书信任的 session（对齐 Android OkHttp client）；
+            // URLSession.shared 在自签名 HTTPS 服务器上会静默 TLS 失败导致预览图永远为空
+            let httpSession = httpFactory.session(for: api.endpoint)
+            let (data, response) = try await httpSession.data(for: request)
             if (response as? HTTPURLResponse)?.statusCode == 304 { return }
             await applySnapshot(deviceId: deviceId, jpeg: data,
                                 etag: (response as? HTTPURLResponse)?.allHeaderFields["ETag"] as? String)

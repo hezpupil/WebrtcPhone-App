@@ -63,7 +63,8 @@ final class UserScope: ObservableObject {
                                      tokenProvider: { session.token },
                                      onUnauthorized: {})
         self.dashboard = socket
-        self.devices = DeviceRepository(session: session, api: api, socket: socket)
+        self.devices = DeviceRepository(session: session, api: api, socket: socket,
+                                        httpFactory: httpFactory)
         self.quickTexts = QuickTextRepository(api: api)
         self.serverFiles = ServerFileRepository(api: api, endpoint: endpoint)
         self.sessionManager = SessionManager(engine: .shared, httpFactory: httpFactory)

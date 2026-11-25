@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var container: AppContainer
     @EnvironmentObject private var scope: UserScope
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab = 0
 
     var body: some View {
@@ -18,6 +19,11 @@ struct HomeView: View {
             scope.devices.setActive(tab == 0)
         }
         .onAppear { scope.devices.setActive(true) }
+        // App 层只负责进后台关轮询（WebrtcPhoneApp）；回前台必须在这里恢复，
+        // 否则切后台回来后轮询与 WS 全停，设备列表永远不再自动刷新
+        .onChange(of: scenePhase) { phase in
+            if phase == .active && tab == 0 { scope.devices.setActive(true) }
+        }
     }
 }
 
