@@ -5,7 +5,13 @@ struct WebrtcPhoneApp: App {
     @StateObject private var container = AppContainer()
     @Environment(\.scenePhase) private var scenePhase
 
-    init() { CrashReporter.install() }
+    init() {
+        CrashReporter.install()
+        // WebRTC 工厂启动时预热（创建耗时长且可能失败，埋点定位；主线程创建最稳妥）
+        DispatchQueue.main.async {
+            RtcEngine.shared.warmUp()
+        }
+    }
 
     var body: some Scene {
         WindowGroup {

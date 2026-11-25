@@ -45,6 +45,7 @@ final class SessionManager: ObservableObject {
 
     func attach(_ renderer: RTCVideoRenderer) {
         keepAliveTask?.cancel()
+        Trail.mark("sm:attach")
         self.renderer = renderer
         session?.setRenderer(renderer)
     }
@@ -90,6 +91,7 @@ final class SessionManager: ObservableObject {
 
     private func replace(_ target: StreamTarget) -> RtcSession {
         let old = session
+        Trail.mark("sm:replace old=\(old != nil) dev=\(target.deviceId)")
         let scope = resumeScope(target)
         let key: String
         if let existing = resumeKeys[scope] { key = existing }
@@ -103,6 +105,7 @@ final class SessionManager: ObservableObject {
         }
         let s = RtcSession(factory: engine.factory, httpFactory: httpFactory,
                            target: target, projectionResumeKey: key)
+        Trail.mark("sm:session-created")
         renderer.map { s.setRenderer($0) }
         s.setAudioEnabled(audioEnabled)
         session = s

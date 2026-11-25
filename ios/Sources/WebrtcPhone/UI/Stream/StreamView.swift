@@ -151,8 +151,12 @@ struct StreamView: View {
     private func connect() {
         var target = makeTarget()
         // Metal 视图只在首次进入时创建一次；避免 SwiftUI 结构体重建时反复创建 RTCMTLVideoView
-        if rendererBox == nil { rendererBox = RTCMTLVideoView() }
+        if rendererBox == nil {
+            rendererBox = RTCMTLVideoView()
+            Trail.mark("sv:renderer-created")
+        }
         guard let renderer = rendererBox else { return }
+        Trail.mark("sv:connect dev=\(device.id)")
         scope.sessionManager?.attach(renderer)
         let s = scope.sessionManager?.open(target)
         s?.phase.subscribe { p in Task { @MainActor in self.phase = p } }

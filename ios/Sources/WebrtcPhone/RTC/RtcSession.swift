@@ -1,6 +1,9 @@
 import Foundation
 import WebRTC
 
+// 便捷埋点
+private func trail(_ event: String) { Trail.mark(event) }
+
 /// 把远端视频帧转发给当前 UI 渲染器，并检测首帧/分辨率。
 /// 渲染目标可随页面重建切换；为 nil 时丢帧（后台保活）。
 private final class FrameSink: NSObject, RTCVideoRenderer {
@@ -121,6 +124,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
 
     private func doStart() {
         guard !closed else { return }
+        trail("rtc:start dev=\(target.deviceId) guest=\(target.isGuest)")
         phaseSubject.send(.signaling)
         connectTimer = schedule(seconds: Self.connectTimeout) { [weak self] in
             guard let self, !self.closed else { return }
@@ -154,12 +158,14 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
 
     private func fail(_ message: String, retryable: Bool, auth: Bool = false) {
         guard !closed else { return }
+        Trail.mark("rtc:fail [\(message)] retryable=\(retryable)")
         teardown(.failed(message: message, retryable: retryable, authError: auth))
     }
 
     private func teardown(_ final: ConnectionPhase) {
         guard !closed else { return }
         closed = true
+        trail("rtc:teardown phase=\(final)")
         [statsTimer, connectTimer, firstFrameTimer, interruptTimer].forEach { $0?.cancel() }
         signaling?.close(); signaling = nil
         frameLock.lock(); renderer = nil; frameLock.unlock()
@@ -203,7 +209,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
 // MARK: - SignalingClient.Listener
 extension RtcSession: SignalingClient.Listener {
     func onOpen() {
-        post { [weak self] in self?.phaseSubject.send(.waitingOffer) }
+        post { [weak self] in trail("rtc:ws-open"); self?.phaseSubject.send(.waitingOffer) }
     }
 
     func onMessage(_ msg: SignalingMessage) {
@@ -229,6 +235,7 @@ extension RtcSession: SignalingClient.Listener {
     private func handleSignaling(_ msg: SignalingMessage) {
         switch msg {
         case .config(let servers):
+            trail("sig:config ice=\(servers.count)")
             createPeerConnection(servers)
             signaling?.send(SignalingProtocol.requestOffer(target.deviceId,
                                                             options: ScrcpyOptions.build(target),
@@ -264,6 +271,7 @@ extension RtcSession: SignalingClient.Listener {
                 if let message { fail(message, retryable: false) }
             }
         case .offer(let sdp):
+            trail("sig:offer len=\(sdp.count)")
             onRemoteOffer(sdp)
         case .answer(let sdp):
             setRemoteDescription(sdp, type: .answer) { [weak self] in
@@ -281,6 +289,7 @@ extension RtcSession: SignalingClient.Listener {
 
     private func createPeerConnection(_ specs: [IceServerSpec]) {
         guard pc == nil else { return }
+        trail("pc:creating")
         let servers = specs.map { s in
             RTCIceServer(urlStrings: s.urls, username: s.username, credential: s.credential)
         }
@@ -301,6 +310,7 @@ extension RtcSession: SignalingClient.Listener {
             return
         }
         pc = p
+        trail("pc:created")
         // file-channel / adb-channel 必须在协商前由本端创建：
         // 部分 libwebrtc 版本对协商后新建的通道不回调 OPEN
         let ordered = RTCDataChannelConfiguration()
@@ -323,16 +333,19 @@ extension RtcSession: SignalingClient.Listener {
 
     private func onRemoteOffer(_ sdp: String) {
         guard let p = pc else { return }
+        trail("pc:offer-received")
         phaseSubject.send(.negotiating)
         setRemoteDescription(sdp, type: .offer) { [weak self] in
             guard let self else { return }
+            trail("pc:remote-set")
             self.onRemoteSet()
             p.answer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { answer, error in
                 if let error { self.post { self.fail("SDP 协商失败：\(error.localizedDescription)", retryable: true) }; return }
                 guard let answer else { self.post { self.fail("SDP 协商失败：无法生成应答", retryable: true) }; return }
+                trail("pc:answer-created")
                 p.setLocalDescription(answer) { error in
                     if let error { self.post { self.fail("SDP 协商失败：\(error.localizedDescription)", retryable: true) }; return }
-                    self.post { self.signaling?.send(SignalingProtocol.answer(self.target.deviceId, sdp: answer.sdp)) }
+                    self.post { self.signaling?.send(SignalingProtocol.answer(self.target.deviceId, sdp: answer.sdp)); trail("sig:answer-sent") }
                 }
             }
         }
@@ -383,8 +396,10 @@ extension RtcSession: SignalingClient.Listener {
             guard let self else { return }
             switch newState {
             case .connected, .completed:
+                trail("ice:connected")
                 self.onConnected()
             case .disconnected:
+                trail("ice:disconnected")
                 if self.phaseSubject.value == .connected {
                     self.phaseSubject.send(.interrupted)
                     self.interruptTimer?.cancel()
@@ -394,6 +409,7 @@ extension RtcSession: SignalingClient.Listener {
                     }
                 }
             case .failed:
+                trail("ice:failed")
                 self.fail("网络穿透失败，请检查网络或配置 TURN 中继", retryable: true)
             default:
                 break
@@ -449,8 +465,10 @@ extension RtcSession: SignalingClient.Listener {
     private func attachTrack(_ track: RTCMediaStreamTrack) {
         guard attachedTracks.insert(track.trackId).inserted else { return }
         if let video = track as? RTCVideoTrack {
+            trail("track:attached video id=\(track.trackId)")
             video.add(frameSink)
         } else if let audio = track as? RTCAudioTrack {
+            trail("track:attached audio")
             audioTrack = audio
             audio.isEnabled = audioEnabled
         }
@@ -463,19 +481,30 @@ extension RtcSession: SignalingClient.Listener {
         let h = Int(swapped ? frame.width : frame.height)
         if w > 0 && h > 0 {
             let cur = videoSizeSubject.value
-            if cur == nil || cur?.0 != w || cur?.1 != h { videoSizeSubject.send((w, h)) }
+            if cur == nil || cur?.0 != w || cur?.1 != h {
+                if firstFrameSubject.value { trail("video:resize \(w)x\(h)") }
+                videoSizeSubject.send((w, h))
+            }
         }
         if !firstFrameSubject.value {
+            trail("video:first \(w)x\(h) rot=\(rotation)")
             firstFrameSubject.send(true)
             firstFrameTimer?.cancel(); firstFrameTimer = nil
         }
         frameLock.lock(); let r = renderer; frameLock.unlock()
-        r?.renderFrame(frame)
+        guard let r else { return }
+        // RTCMTLVideoView 是 UI 视图：统一在主线程渲染，避免 Metal 层跨线程访问
+        if Thread.isMainThread {
+            r.renderFrame(frame)
+        } else {
+            DispatchQueue.main.async { r.renderFrame(frame) }
+        }
     }
 
     private func onAgentChannel(_ dc: RTCDataChannel) {
         let ch = SafeChannel(dc)
         agentChannels.append(ch)
+        trail("dc:open \(ch.label)")
         switch ch.label {
         case "input-channel":
             inputChannel = ch

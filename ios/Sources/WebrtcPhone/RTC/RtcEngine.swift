@@ -12,6 +12,10 @@ final class RtcEngine {
 
     private init() {}
 
-    /// 应用启动早期预热，避免首个会话卡在初始化。
-    func warmUp() { _ = factory }
+    /// 应用启动早期预热，避免首个会话卡在初始化；埋点便于定位工厂创建阶段的 abort。
+    func warmUp() {
+        Trail.mark("engine:factory-creating")
+        _ = factory
+        Trail.mark("engine:factory-ready")
+    }
 }
