@@ -68,7 +68,7 @@ final class SignalingClient: NSObject {
         }
         delegate.onFailure = { [weak self] error, code in
             guard let self, !self.isClosedByUs else { return }
-            Trail.mark("sig:ws-failure http=\(code ?? -1) err=\(error?.localizedDescription ?? "-")")
+            Trail.mark("sig:ws-failure http=\(code ?? -1) err=\(error.localizedDescription)")
             self.listener?.onClosed(error: ApiError.from(error), httpCode: code)
         }
 
