@@ -177,7 +177,7 @@ jobs:
         with:
           name: WebrtcPhone-iOS-dSYM
           path: ${{ runner.temp }}/WebrtcPhone-dSYM.zip
-          if-no-files-found: warning
+          if-no-files-found: warn
 
       - name: Publish to GitHub Release (on v* / ios-* tag)
         if: startsWith(github.ref, 'refs/tags/')
