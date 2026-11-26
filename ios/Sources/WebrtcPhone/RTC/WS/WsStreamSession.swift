@@ -2,8 +2,8 @@ import Foundation
 import VideoToolbox
 import CoreMedia
 
-/// WS 备用投屏会话：通过 /connect_client 收 H.264 裸流（PREV 帧），VideoToolbox 解码。
-/// 对齐 Android 端 WsStreamSession.kt（MediaCodec 版本）。
+/// WS 备用投屏会话：通过 /connect_client 收 H.264 裸流（PREV 帧），VideoToolbox 解码到
+/// CVPixelBuffer，经 H264FrameRenderer（MTKView）上屏。对齐 Android 端 WsStreamSession.kt。
 /// 仅支持视频 + 输入（touch/key/text/scroll 经 group_control_event）；无音频/文件/终端。
 @MainActor
 final class WsStreamSession: ObservableObject {
@@ -28,6 +28,9 @@ final class WsStreamSession: ObservableObject {
     private var lastStatsAt = Date()
     private var statsTimer: DispatchSourceTimer?
 
+    /// 解码线程回调：每帧交付 BGRA CVPixelBuffer（由 H264FrameRenderer.display 消费）
+    var onFrame: ((CVPixelBuffer) -> Void)?
+
     private let idSeq = AtomicInt64WS(0)
 
     /// 输入：包进 group_control_event 下发同一条 WS
@@ -40,22 +43,24 @@ final class WsStreamSession: ObservableObject {
         self.target = target
         self.httpFactory = httpFactory
         self.videoSize = target.displayHint
-        self.decoder = H264Decoder { [weak self] size in
-            guard let self else { return }
-            Task { @MainActor in
-                if !self.firstFrame {
-                    self.firstFrame = true
-                    self.phase = .connected
-                    if let s = size, self.videoSize == nil { self.videoSize = (Int(s.width), Int(s.height)) }
-                }
-                self.frameCount += 1
-            }
-        }
     }
 
     func start() {
         guard !closed else { return }
         phase = .signaling
+        // 首帧驱动：VT 输出回调（decodeQueue）→ 主线程状态更新 + 渲染器交付
+        decoder = H264Decoder { [weak self] pixelBuffer, size in
+            guard let self else { return }
+            self.onFrame?(pixelBuffer)
+            Task { @MainActor in
+                if !self.firstFrame {
+                    self.firstFrame = true
+                    self.phase = .connected
+                }
+                if let s = size { self.videoSize = (Int(s.width), Int(s.height)) }
+                self.frameCount += 1
+            }
+        }
         let ep = target.endpoint
         var components = URLComponents(string: ep.wsUrl("/connect_client"))!
         var headers: [String: String] = [:]
@@ -111,11 +116,15 @@ final class WsStreamSession: ObservableObject {
         guard !closed else { return }
         closed = true
         statsTimer?.cancel(); statsTimer = nil
+        // 对齐 Android：先发 stop_preview 让 agent 停推（发送失败不影响关闭流程）
+        sendText(WsProtocol.stopPreview(target.deviceId))
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
         session?.invalidateAndCancel(); session = nil
         delegate = nil
-        decoder?.reset()
+        onFrame = nil
+        let dec = decoder
+        decodeQueue.async { dec?.reset() }
         if !phase.isTerminal { phase = .closed }
     }
 
@@ -181,20 +190,25 @@ final class WsStreamSession: ObservableObject {
             self.stats.bitrateBps = Int64(Double(bytes) * 8 / dt)
             self.stats.width = size?.0 ?? 0
             self.stats.height = size?.1 ?? 0
+            self.stats.codec = "H.264"
+            self.stats.protocolName = "WS/TCP"
         }
     }
 }
 
-/// VideoToolbox H.264 解码器：接收 Annex-B NALU（SPS/PPS/IDR），输出首帧尺寸。
+/// VideoToolbox H.264 解码器：接收 Annex-B NALU（SPS/PPS/IDR），
+/// 输出 BGRA CVPixelBuffer（含 SPS/PPS 尺寸）。decode 仅在单一线程调用。
 private final class H264Decoder {
     private var session: VTDecompressionSession?
     private var formatDesc: CMVideoFormatDescription?
     private var sps: Data?
     private var pps: Data?
-    private let firstFrame: ((CGSize?) -> Void)?
     private var reported = false
+    private let onFrame: (CVPixelBuffer, CGSize?) -> Void
 
-    init(firstFrame: @escaping (CGSize?) -> Void) { self.firstFrame = firstFrame }
+    init(onFrame: @escaping (CVPixelBuffer, CGSize?) -> Void) {
+        self.onFrame = onFrame
+    }
 
     func decode(_ annexB: Data, isKey: Bool) {
         let nalus = splitAnnexB(annexB)
@@ -205,38 +219,7 @@ private final class H264Decoder {
             if type == 8 { pps = nalu; continue }
         }
         if session == nil, let sps, let pps {
-            let spsBytes = [UInt8](sps)
-            let ppsBytes = [UInt8](pps)
-            let sizes = [sps.count, pps.count]
-            let status: OSStatus = spsBytes.withUnsafeBufferPointer { sp in
-                ppsBytes.withUnsafeBufferPointer { pp in
-                    let pointers: [UnsafePointer<UInt8>] = [sp.baseAddress!, pp.baseAddress!]
-                    return pointers.withUnsafeBufferPointer { pbuf in
-                        CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                            allocator: nil,
-                            parameterSetCount: 2,
-                            parameterSetPointers: pbuf.baseAddress!,
-                            parameterSetSizes: sizes,
-                            nalUnitHeaderLength: 4,
-                            formatDescriptionOut: &self.formatDesc
-                        )
-                    }
-                }
-            }
-            guard status == noErr, let formatDesc else { return }
-            let dims = CMVideoFormatDescriptionGetDimensions(formatDesc)
-            let attrs: [CFString: Any] = [
-                kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
-                kCVPixelBufferWidthKey: Int(dims.width),
-                kCVPixelBufferHeightKey: Int(dims.height),
-            ]
-            var cb = VTDecompressionOutputCallbackRecord(
-                decompressionOutputCallback: { _, _, _, _, _, _, _ in },
-                decompressionOutputRefCon: nil
-            )
-            VTDecompressionSessionCreate(allocator: nil, formatDescription: formatDesc,
-                                         decoderSpecification: nil, imageBufferAttributes: attrs as CFDictionary,
-                                         outputCallback: &cb, decompressionSessionOut: &session)
+            createSession(sps: sps, pps: pps)
         }
         guard let session else { return }
         let avcc = toAVCC(nalus)
@@ -259,11 +242,66 @@ private final class H264Decoder {
         guard let sample else { return }
         VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [],
                                           frameRefcon: nil, infoFlagsOut: nil)
+    }
+
+    /// 创建 VT 会话。输出回调是 C 函数指针（不能捕获上下文），self 经 refcon 传入。
+    private func createSession(sps: Data, pps: Data) {
+        let spsBytes = [UInt8](sps)
+        let ppsBytes = [UInt8](pps)
+        let sizes = [sps.count, pps.count]
+        var fmt: CMVideoFormatDescription?
+        let status: OSStatus = spsBytes.withUnsafeBufferPointer { sp in
+            ppsBytes.withUnsafeBufferPointer { pp in
+                let pointers: [UnsafePointer<UInt8>] = [sp.baseAddress!, pp.baseAddress!]
+                return pointers.withUnsafeBufferPointer { pbuf in
+                    CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                        allocator: nil,
+                        parameterSetCount: 2,
+                        parameterSetPointers: pbuf.baseAddress!,
+                        parameterSetSizes: sizes,
+                        nalUnitHeaderLength: 4,
+                        formatDescriptionOut: &fmt
+                    )
+                }
+            }
+        }
+        guard status == noErr, let format = fmt else {
+            Trail.mark("h264d:fmt-failed \(status)")
+            return
+        }
+        formatDesc = format
+        let dims = CMVideoFormatDescriptionGetDimensions(format)
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
+            kCVPixelBufferWidthKey: Int(dims.width),
+            kCVPixelBufferHeightKey: Int(dims.height),
+        ]
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        var cb = VTDecompressionOutputCallbackRecord(
+            decompressionOutputCallback: h264OutputCallback,
+            decompressionOutputRefCon: refcon
+        )
+        var out: VTDecompressionSession?
+        let st = VTDecompressionSessionCreate(allocator: nil, formatDescription: format,
+                                              decoderSpecification: nil,
+                                              imageBufferAttributes: attrs as CFDictionary,
+                                              outputCallback: &cb, decompressionSessionOut: &out)
+        guard st == noErr, let s = out else {
+            Trail.mark("h264d:session-failed \(st)")
+            return
+        }
+        session = s
+    }
+
+    /// 输出回调（VT 内部线程）：有效帧 → onFrame（携带 SPS 尺寸提示，仅首次）
+    fileprivate func emit(_ imageBuffer: CVImageBuffer) {
+        var size: CGSize?
         if !reported, let formatDesc {
             reported = true
             let d = CMVideoFormatDescriptionGetDimensions(formatDesc)
-            firstFrame?(CGSize(width: Int(d.width), height: Int(d.height)))
+            size = CGSize(width: Int(d.width), height: Int(d.height))
         }
+        onFrame(imageBuffer, size)
     }
 
     func reset() {
@@ -278,11 +316,10 @@ private final class H264Decoder {
         var i = 0
         while i + 3 < b.count {
             if b[i] == 0 && b[i+1] == 0 && b[i+2] == 1 { starts.append(i); i += 3 }
-            else if i + 4 < b.count, b[i] == 0 && b[i+1] == 0 && b[i+2] == 0 && b[i+3] == 1 { starts.append(i); i += 4 }
             else { i += 1 }
         }
         for (idx, s) in starts.enumerated() {
-            let payloadStart = s + (b[s+2] == 1 ? 3 : 4)
+            let payloadStart = s + 3
             let end = idx + 1 < starts.count ? starts[idx+1] : b.count
             if end > payloadStart { result.append(Data(b[payloadStart..<end])) }
         }
@@ -298,6 +335,19 @@ private final class H264Decoder {
         }
         return out
     }
+}
+
+/// C 函数指针输出回调：refcon → H264Decoder.emit（CVPixelBuffer；丢弃/出错时忽略）
+private func h264OutputCallback(_ refcon: UnsafeMutableRawPointer?,
+                                _ flags: UnsafePointer<VTDecodeFrameFlags>?,
+                                _ info: UnsafePointer<VTDecodeInfoFlags>?,
+                                _ imageBuffer: CVImageBuffer?,
+                                _ status: OSStatus,
+                                _ pts: UnsafePointer<CMTime>?,
+                                _ duration: UnsafePointer<CMTime>?) {
+    guard status == noErr, let imageBuffer, let refcon else { return }
+    if let info, info.pointee.contains(.frameDropped) { return }
+    Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue().emit(imageBuffer)
 }
 
 private final class AtomicInt64WS {

@@ -36,7 +36,8 @@ struct TouchMapper {
  *   agent 按此尺寸校验并换算，尺寸不符的事件会被丢弃。
  */
 final class TouchForwardView: UIView {
-    var session: RtcSession?
+    /// 统一输入入口（WebRTC = RtcSession.input；WS = WsStreamSession.input）
+    var input: InputProtocol?
     var videoSize: (Int, Int)?
     /// 设备逻辑分辨率（已按画面方向做过宽高互换），nil 时回退 displayHint/videoSize
     var displaySize: (Int, Int)?
@@ -57,8 +58,7 @@ final class TouchForwardView: UIView {
     /// 对齐 Android TouchForwarder.targetSize
     private func targetSize() -> (Int, Int)? {
         guard let video = videoSize else { return nil }
-        let disp: (Int, Int)? = displaySize ?? session?.target.displayHint
-        guard let d = disp else { return video }
+        guard let d = displaySize else { return video }
         let rotated = (video.0 > video.1) != (d.0 > d.1)
         return rotated ? (d.1, d.0) : d
     }
@@ -72,25 +72,25 @@ final class TouchForwardView: UIView {
     /// 否则 Ended/Cancelled 先删表再发送会导致 UP 永远发不出（远端停在
     /// DOWN 状态 → 点击变长按、后续同 id 事件被 agent 拒绝 → 滑动失效）。
     private func send(_ touch: UITouch, pointerId: Int, action: Int, clamp: Bool) {
-        guard let session, let size = targetSize(), !viewOnly,
+        guard let input, let size = targetSize(), !viewOnly,
               let mapper = makeMapper(size: size),
               let p = mapper.map(touch.location(in: self), clamp: clamp) else { return }
-        _ = session.input.touch(pointerId: pointerId, action: action,
-                                x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
+        _ = input.touch(pointerId: pointerId, action: action,
+                        x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for t in touches {
             // 黑边按下：不注册、不发送（对齐 Android——该指后续 MOVE/UP 一并跳过）
-            guard let session, let size = targetSize(), !viewOnly,
+            guard let input, let size = targetSize(), !viewOnly,
                   let mapper = makeMapper(size: size),
                   let p = mapper.map(t.location(in: self), clamp: false) else { continue }
             let id = nextPointerId
             nextPointerId += 1
             pointerIds[ObjectIdentifier(t)] = id
             if hapticsEnabled && pointerIds.count == 1 { haptic.impactOccurred() }
-            _ = session.input.touch(pointerId: id, action: TouchAction.down,
-                                    x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
+            _ = input.touch(pointerId: id, action: TouchAction.down,
+                            x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
         }
     }
 
@@ -122,7 +122,7 @@ final class TouchForwardView: UIView {
 
 /// SwiftUI 包装：透明覆盖在渲染视图上承接全部触摸
 struct TouchLayer: UIViewRepresentable {
-    let session: RtcSession?
+    let input: InputProtocol?
     let videoSize: (Int, Int)?
     let displaySize: (Int, Int)?
     let viewOnly: Bool
@@ -131,7 +131,7 @@ struct TouchLayer: UIViewRepresentable {
     func makeUIView(context: Context) -> TouchForwardView { TouchForwardView() }
 
     func updateUIView(_ v: TouchForwardView, context: Context) {
-        v.session = session
+        v.input = input
         v.videoSize = videoSize
         v.displaySize = displaySize
         v.viewOnly = viewOnly
@@ -285,7 +285,7 @@ final class KeyboardHeightObserver: ObservableObject {
 
 /// 底部键盘输入条：文字走 inject_text 下发，回车键发送 ENTER
 struct KeyboardBar: View {
-    let session: RtcSession?
+    let input: InputProtocol?
     let onDone: () -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -299,7 +299,7 @@ struct KeyboardBar: View {
                 .background(Color(hex: "1F2633").opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
                 .focused($focused)
                 .onSubmit { send() }
-            Button { _ = session?.input.press(Keys.enter) } label: {
+            Button { _ = input?.press(Keys.enter) } label: {
                 Image(systemName: "keyboard.return").font(.title3).foregroundStyle(.white)
             }
             Button { onDone() } label: {
@@ -314,7 +314,7 @@ struct KeyboardBar: View {
 
     private func send() {
         guard !text.isEmpty else { return }
-        _ = session?.input.text(text)
+        _ = input?.text(text)
         text = ""
     }
 }
