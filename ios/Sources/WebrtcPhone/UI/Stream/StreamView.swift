@@ -175,10 +175,12 @@ struct StreamView: View {
                 Text(phaseLabel).font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
-            if container.settings.app.showStats {
-                Text("\(stats.fps) fps · \(stats.latencyMs) ms")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
+                        if container.settings.app.showStats {
+                            Text(stats.latencyMs > 0
+                                 ? "\(stats.fps) fps · \(stats.latencyMs) ms"
+                                 : (stats.fps > 0 ? "\(stats.fps) fps" : ""))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
             Menu {
                 Button { restart() } label: { Label("重新连接", systemImage: "arrow.clockwise") }
                 Button {

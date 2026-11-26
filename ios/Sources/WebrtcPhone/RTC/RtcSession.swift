@@ -42,7 +42,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private var firstFrameTimer: DispatchSourceTimer?
     private var interruptTimer: DispatchSourceTimer?
     private var closed = false
-    private let statsCalc = StatsCalculator()
+    /// getStats 已弃用：报告的 ObjC 桥接层存在数据依赖性 SIGTRAP（详见 onConnected 注释）
 
     private let frameSink = FrameSink()
     private let frameLock = NSLock()
@@ -92,6 +92,10 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private var audioTrack: RTCAudioTrack?
     private var videoTrack: RTCVideoTrack?
     private var frameCount = 0
+    /// 当前统计窗口内的帧数（frameLock 保护），用于自研 fps 统计
+    private var secFrames = 0
+    /// 最近一次发布的统计（保留上次尺寸/解码器信息，避免每秒抖动清零）
+    private var lastStats = StreamStats()
 
     private static let connectTimeout: TimeInterval = 25
     private static let firstFrameTimeout: TimeInterval = 15
@@ -544,20 +548,28 @@ extension RtcSession: SignalingClient.Listener {
             }
         }
         if statsTimer == nil {
+            // 自研统计：fps 来自帧回调计数、尺寸来自视频流，完全不触碰 getStats。
+            // 背景：getStats 报告的 ObjC 桥接层在特定报告内容下触发 SIGTRAP（第 4~6 个
+            // 回调时数据依赖性崩溃，dSYM 符号化 + 全量数值防御均无法根除），故移除。
             var statTicks = 0
             statsTimer = scheduleRepeating(seconds: 1) { [weak self] in
-                guard let self, !self.closed, let p = self.pc else { return }
-                p.statistics { [weak self] report in
-                    guard let self, !self.closed else { return }
-                    self.post {
-                        let s = self.statsCalc.compute(report)
-                        self.statsSubject.send(s)
-                        statTicks += 1
-                        // 诊断黑屏：周期记录解码器状态（fd=已解码帧 bytes=已收字节 dec=解码器实现）
-                        if statTicks % 3 == 0 {
-                            trail("stats: fps=\(s.fps) kbps=\(s.bitrateBps / 1000) \(s.width)x\(s.height) dec='\(s.decoder)' codec='\(s.codec)'")
-                        }
-                    }
+                guard let self, !self.closed else { return }
+                self.frameLock.lock()
+                let fps = self.secFrames
+                self.secFrames = 0
+                self.frameLock.unlock()
+                var s = self.lastStats
+                s.fps = fps
+                if let size = self.videoSizeSubject.value {
+                    s.width = size.0
+                    s.height = size.1
+                }
+                if fps == 0 { s.bitrateBps = 0 }
+                self.lastStats = s
+                self.statsSubject.send(s)
+                statTicks += 1
+                if statTicks % 3 == 0 {
+                    trail("stats: fps=\(s.fps) \(s.width)x\(s.height)")
                 }
             }
         }
@@ -580,6 +592,7 @@ extension RtcSession: SignalingClient.Listener {
 
     fileprivate func onVideoFrame(_ frame: RTCVideoFrame) {
         frameCount += 1
+        frameLock.lock(); secFrames += 1; frameLock.unlock()
         if frameCount == 1 || frameCount % 300 == 0 {
             trail("frame:cb n=\(frameCount) \(frame.width)x\(frame.height) rot=\(Int(frame.rotation.rawValue))")
         }

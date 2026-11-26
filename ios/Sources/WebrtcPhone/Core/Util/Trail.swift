@@ -3,7 +3,7 @@ import Foundation
 /// 构建标识：每次发布前手动更新，出现在 trail/崩溃报告中，
 /// 用于确认用户实际运行的二进制版本（版本号不升时尤为关键）。
 enum AppBuild {
-    static let tag = "ios-20261126-1040"
+    static let tag = "ios-20261126-1100"
 }
 
 /// 连接过程埋点（trail.log）：崩溃时自动合并进崩溃报告，
