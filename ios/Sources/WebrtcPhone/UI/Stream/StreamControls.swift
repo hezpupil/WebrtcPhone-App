@@ -63,43 +63,59 @@ final class TouchForwardView: UIView {
         return rotated ? (d.1, d.0) : d
     }
 
-    private func send(_ touch: UITouch, action: Int, clamp: Bool) {
-        guard let session, let size = targetSize(), !viewOnly else { return }
-        let mapper = TouchMapper(viewW: bounds.width, viewH: bounds.height,
-                                 videoW: CGFloat(size.0), videoH: CGFloat(size.1))
-        // 黑边按下（clamp=false 且越界）：丢弃该指，对齐 Android（不注册 activePointers）
-        guard let p = mapper.map(touch.location(in: self), clamp: clamp) else {
-            if action == TouchAction.down { pointerIds.removeValue(forKey: ObjectIdentifier(touch)) }
-            return
-        }
-        guard let id = pointerIds[ObjectIdentifier(touch)] else { return }
-        _ = session.input.touch(pointerId: id, action: action,
+    private func makeMapper(size: (Int, Int)) -> TouchMapper? {
+        TouchMapper(viewW: bounds.width, viewH: bounds.height,
+                    videoW: CGFloat(size.0), videoH: CGFloat(size.1))
+    }
+
+    /// 发送触摸事件。pointerId 必须由调用方显式取出——不能在 send 内查表，
+    /// 否则 Ended/Cancelled 先删表再发送会导致 UP 永远发不出（远端停在
+    /// DOWN 状态 → 点击变长按、后续同 id 事件被 agent 拒绝 → 滑动失效）。
+    private func send(_ touch: UITouch, pointerId: Int, action: Int, clamp: Bool) {
+        guard let session, let size = targetSize(), !viewOnly,
+              let mapper = makeMapper(size: size),
+              let p = mapper.map(touch.location(in: self), clamp: clamp) else { return }
+        _ = session.input.touch(pointerId: pointerId, action: action,
                                 x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for t in touches {
-            pointerIds[ObjectIdentifier(t)] = nextPointerId
+            // 黑边按下：不注册、不发送（对齐 Android——该指后续 MOVE/UP 一并跳过）
+            guard let session, let size = targetSize(), !viewOnly,
+                  let mapper = makeMapper(size: size),
+                  let p = mapper.map(t.location(in: self), clamp: false) else { continue }
+            let id = nextPointerId
             nextPointerId += 1
+            pointerIds[ObjectIdentifier(t)] = id
             if hapticsEnabled && pointerIds.count == 1 { haptic.impactOccurred() }
-            // 黑边按下：Android 直接丢弃该指（不发送），移动/抬起自然也不会有事件
-            send(t, action: TouchAction.down, clamp: false)
+            _ = session.input.touch(pointerId: id, action: TouchAction.down,
+                                    x: Int(p.x), y: Int(p.y), w: size.0, h: size.1)
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { send(t, action: TouchAction.move, clamp: true) }
+        for t in touches {
+            guard let id = pointerIds[ObjectIdentifier(t)] else { continue }
+            send(t, pointerId: id, action: TouchAction.move, clamp: true)
+        }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches where pointerIds.removeValue(forKey: ObjectIdentifier(t)) != nil {
-            send(t, action: TouchAction.up, clamp: true)
+        for t in touches {
+            let oid = ObjectIdentifier(t)
+            guard let id = pointerIds[oid] else { continue }
+            pointerIds.removeValue(forKey: oid)
+            send(t, pointerId: id, action: TouchAction.up, clamp: true)
         }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches where pointerIds.removeValue(forKey: ObjectIdentifier(t)) != nil {
-            send(t, action: TouchAction.cancel, clamp: true)
+        for t in touches {
+            let oid = ObjectIdentifier(t)
+            guard let id = pointerIds[oid] else { continue }
+            pointerIds.removeValue(forKey: oid)
+            send(t, pointerId: id, action: TouchAction.cancel, clamp: true)
         }
     }
 }
@@ -125,15 +141,15 @@ struct TouchLayer: UIViewRepresentable {
 
 // MARK: - 虚拟导航键（对齐 Android NavKeys）
 
-/// 虚拟导航键：返回 / 主页 / 多任务（长按返回 = 菜单）
+/// 虚拟导航键：多任务 / 主页 / 返回（长按返回 = 菜单）。返回键在右侧（用户习惯）。
 struct NavKeysBar: View {
     let onKey: (Int) -> Void
     let onLongKey: (Int) -> Void
 
     private let items: [(icon: String, label: String, key: Int, size: CGFloat)] = [
-        ("arrow.left", "返回", Keys.back, 20),
-        ("circle.fill", "主页", Keys.home, 16),
         ("line.3.horizontal", "多任务", Keys.appSwitch, 20),
+        ("circle.fill", "主页", Keys.home, 16),
+        ("arrow.left", "返回", Keys.back, 20),
     ]
 
     var body: some View {
