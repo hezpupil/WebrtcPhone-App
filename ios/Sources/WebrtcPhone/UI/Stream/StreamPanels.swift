@@ -345,15 +345,10 @@ struct QualitySheet: View {
                 }
 
                 if draft.preset == .custom {
-                    Stepper("最大分辨率边长 \(draft.maxSize == 0 ? "原画" : "\(draft.maxSize)")") {
-                        draft.maxSize = min(max(draft.maxSize + 120, 0), 4096)
-                    }
-                    Stepper("帧率 \(draft.maxFps) fps") {
-                        draft.maxFps = min(max(draft.maxFps + 5, 0), 144)
-                    }
-                    Stepper("目标码率 \(draft.bitrateMbps) Mbps") {
-                        draft.bitrateMbps = min(max(draft.bitrateMbps + 1, 1), 100)
-                    }
+                    Stepper("最大分辨率边长 \(draft.maxSize == 0 ? "原画" : "\(draft.maxSize)")",
+                            value: $draft.maxSize, in: 0...4096, step: 120)
+                    Stepper("帧率 \(draft.maxFps) fps", value: $draft.maxFps, in: 0...144, step: 5)
+                    Stepper("目标码率 \(draft.bitrateMbps) Mbps", value: $draft.bitrateMbps, in: 1...100)
                 }
 
                 Toggle("带宽自适应（BWE）", isOn: $draft.bwe)

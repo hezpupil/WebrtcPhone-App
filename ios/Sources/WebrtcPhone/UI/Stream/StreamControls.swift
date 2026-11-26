@@ -170,7 +170,7 @@ struct DrawerHandle: View {
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 64)
                 .background(Color(hex: "1F2633").opacity(0.8),
-                            in: UnevenRoundedRectangle(topTrailingRadius: 12, bottomTrailingRadius: 12))
+                            in: UnevenRoundedRectangle(bottomTrailingRadius: 12, topTrailingRadius: 12))
         }
         .buttonStyle(.plain)
     }
@@ -350,8 +350,4 @@ struct StreamBanner: View {
         .background((warning ? Color(hex: "B8860B") : Color.gray).opacity(0.9),
                     in: RoundedRectangle(cornerRadius: 6))
     }
-}
-
-extension CGFloat {
-    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat { min(max(self, range.lowerBound), range.upperBound) }
 }
