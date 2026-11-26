@@ -29,7 +29,13 @@ final class StatsCalculator {
         return 0
     }
     private func integer(_ v: Any?) -> Int64 {
-        if let n = v as? NSNumber { return n.int64Value }
+        // NSNumber.int64Value 对 NaN/Inf/超范围 double 是未定义转换（可能得到 Int64.min），
+        // 直接用会随后续减法溢出 trap（SIGTRAP）。统一经 double 有限性检查 + clamp。
+        if let n = v as? NSNumber {
+            let d = n.doubleValue
+            guard d.isFinite else { return 0 }
+            return Int64(max(-1e15, min(1e15, d)))
+        }
         if let s = v as? String { return Int64(s) ?? 0 }
         return 0
     }

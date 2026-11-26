@@ -44,7 +44,7 @@ struct StreamView: View {
     @State private var phase: ConnectionPhase = .signaling
     @State private var videoSize: (Int, Int)?
     @State private var stats = StreamStats()
-    @State private var showControls = true
+    @State private var showControls = false
     @State private var showFilePanel = false
     @State private var showTerminal = false
     @State private var showKeybar = false
@@ -68,38 +68,13 @@ struct StreamView: View {
             if let renderer = rendererBox {
                 VideoRenderView(renderer: renderer)
                     .ignoresSafeArea()
-                    .onTapGesture { withAnimation { showControls.toggle() } }
                     .gesture(touchGesture)
             }
 
-            // 顶部信息栏
             if showControls {
-                VStack {
-                    HStack {
-                        Button { scope.sessionManager?.close(endProjection: true); closePage() } label: {
-                            Image(systemName: "chevron.left").font(.title2)
-                        }
-                        VStack(alignment: .leading) {
-                            Text(device.displayName).font(.headline)
-                            Text(phaseLabel).font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if container.settings.app.showStats {
-                            Text("\(stats.fps) fps · \(stats.latencyMs) ms")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Menu {
-                            Button { restart() } label: { Label("重新连接", systemImage: "arrow.clockwise") }
-                            Button {
-                                viewOnly.toggle()
-                                restart()
-                            } label: {
-                                Label(viewOnly ? "切换为完全控制" : "切换为仅观看", systemImage: "eye")
-                            }
-                            Button { closePage() } label: { Label("结束投屏", systemImage: "stop.fill") }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
-                    .padding().background(.ultraThinMaterial)
+                // 展开态：顶部信息栏 + 底部功能栏
+                VStack(spacing: 0) {
+                    topBar
                     Spacer()
                     StreamControlBar(showFiles: $showFilePanel, showTerminal: $showTerminal,
                                      showKeybar: $showKeybar, session: session)
@@ -107,6 +82,25 @@ struct StreamView: View {
                         .background(.ultraThinMaterial)
                 }
                 .foregroundStyle(.white)
+                .transition(.opacity)
+            } else {
+                // 收起态（默认）：整屏投屏，只有一个半透明浮动按钮
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button { withAnimation(.easeInOut(duration: 0.15)) { showControls = true } } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.45), in: Circle())
+                                .shadow(radius: 3)
+                        }
+                        .padding(.trailing, 14)
+                        .padding(.bottom, 14)
+                    }
+                }
                 .transition(.opacity)
             }
 
@@ -165,6 +159,41 @@ struct StreamView: View {
         case .failed(let m, _, _): return m
         case .closed: return "已关闭"
         }
+    }
+
+    /// 展开态顶部栏：返回 / 设备名 / 统计 / 菜单（含收起与结束投屏）
+    private var topBar: some View {
+        HStack {
+            Button {
+                scope.sessionManager?.close(endProjection: true)
+                closePage()
+            } label: {
+                Image(systemName: "chevron.left").font(.title2)
+            }
+            VStack(alignment: .leading) {
+                Text(device.displayName).font(.headline)
+                Text(phaseLabel).font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if container.settings.app.showStats {
+                Text("\(stats.fps) fps · \(stats.latencyMs) ms")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Menu {
+                Button { restart() } label: { Label("重新连接", systemImage: "arrow.clockwise") }
+                Button {
+                    viewOnly.toggle()
+                    restart()
+                } label: {
+                    Label(viewOnly ? "切换为完全控制" : "切换为仅观看", systemImage: "eye")
+                }
+                Button {
+                    withAnimation { showControls = false }
+                } label: { Label("收起控制栏", systemImage: "arrow.down.right.and.arrow.up.left") }
+                Button { closePage() } label: { Label("结束投屏", systemImage: "stop.fill") }
+            } label: { Image(systemName: "ellipsis.circle") }
+        }
+        .padding().background(.ultraThinMaterial)
     }
 
     private func connect() {
