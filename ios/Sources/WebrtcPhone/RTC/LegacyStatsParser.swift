@@ -63,17 +63,20 @@ struct LegacyStatsParser {
     // MARK: - 候选对（RTT / 候选类型 / 协议）
 
     private static func extractPair(_ report: Report) -> (rtt: Double, cand: String, proto: String) {
-        var pair: [String: String]?
-        var fallback: [String: String]?
+        // 三级回退：nominated/selected 对 → state=succeeded 对 → 任何带 RTT 的对。
+        // 部分实现的 candidate-pair 不带 nominated/state 键，不能一刀切过滤
+        var best: [String: String]?
+        var succeeded: [String: String]?
+        var withRtt: [String: String]?
         for (_, st) in report {
             guard st["type"] == "candidate-pair" else { continue }
-            guard str(st["state"]) == "succeeded" else { continue }
             let nominated = st["nominated"] == "true" || st["nominated"] == "1"
             let selected = st["selected"] == "true" || st["selected"] == "1"
-            if nominated || selected { pair = st; break }
-            if fallback == nil { fallback = st }
+            if nominated || selected { best = st; break }
+            if succeeded == nil, str(st["state"]) == "succeeded" { succeeded = st }
+            if withRtt == nil, num(st["currentRoundTripTime"]) > 0 { withRtt = st }
         }
-        guard let m = pair ?? fallback else { return (0, "", "") }
+        guard let m = best ?? succeeded ?? withRtt else { return (0, "", "") }
         let rtt = num(m["currentRoundTripTime"])
         var cand = ""
         var proto = ""

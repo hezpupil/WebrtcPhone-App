@@ -19,6 +19,10 @@ struct StreamView: View {
     @ObservedObject var container: AppContainer
     /// 独立投屏页的关闭回调（条件渲染替换视图树时由宿主提供）
     var onClose: (() -> Void)? = nil
+    /// 传输通道覆盖（默认 WebRTC；WS 中转模式 iOS 暂未移植，入口禁用）
+    var transport: StreamTransport = .webrtc
+    /// 摄像头监控参数（非 nil 时走 camera 模式，对齐 Android CameraPickerSheet）
+    var cameraParams: CameraParams? = nil
 
     @State private var currentDevice: Device
     @State private var rendererBox: RTCMTLVideoView?
@@ -39,10 +43,14 @@ struct StreamView: View {
     @StateObject private var kbObserver = KeyboardHeightObserver()
     @Environment(\.dismiss) private var dismiss
 
-    init(device: Device, scope: UserScope, container: AppContainer, onClose: (() -> Void)? = nil) {
+    init(device: Device, scope: UserScope, container: AppContainer,
+         transport: StreamTransport = .webrtc, cameraParams: CameraParams? = nil,
+         onClose: (() -> Void)? = nil) {
         self.initialDevice = device
         self.scope = scope
         self.container = container
+        self.transport = transport
+        self.cameraParams = cameraParams
         self.onClose = onClose
         _currentDevice = State(initialValue: device)
     }
@@ -283,6 +291,12 @@ struct StreamView: View {
         t.settings = container.settings.stream
         t.accessMode = viewOnly ? AccessMode.viewOnly : AccessMode.full
         t.allowClipboard = container.settings.app.clipboardSync
+        t.transport = transport
+        // 摄像头监控：mode + 麦克风开关（设置里 audio 默认关，此处按面板开关覆盖）
+        if let cp = cameraParams {
+            t.mode = .camera(cp)
+            t.settings.audio = cp.micAudio
+        }
         // 触控坐标系提示：设备逻辑分辨率（对齐 Android switchDevice 的 displayHint）
         if let d = currentDevice.info.primaryDisplay { t.displayHint = (d.width, d.height) }
         return t

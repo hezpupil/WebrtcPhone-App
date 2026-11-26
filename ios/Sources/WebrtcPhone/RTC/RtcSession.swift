@@ -508,6 +508,11 @@ extension RtcSession: SignalingClient.Listener {
                 if !c.protocolName.isEmpty { s.protocolName = c.protocolName }
                 self.lastStats = s
                 self.statsSubject.send(s)
+                // 诊断采样（每 8 次拉取 ≈16s 一次）：字段为 0 时 trail 可直接定位
+                self.statsTick += 1
+                if self.statsTick % 8 == 0 {
+                    trail("stats:legacy n=\(report.count) rtt=\(c.rttMs) br=\(c.bitrateBps) loss=\(Int(c.packetLossPct)) jb=\(c.jitterBufferMs)")
+                }
             }
         }
     }

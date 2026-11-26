@@ -26,6 +26,8 @@ enum UserFilter: String, CaseIterable, Identifiable {
 
 struct SharesView: View {
     @EnvironmentObject private var scope: UserScope
+    /// 预选设备（从设备长按菜单「分享 / 生成卡密」进入时携带，对齐 Android Routes.shares(id, create=true)）
+    var presetDeviceId: String? = nil
     @State private var shares: [Share] = []
     @State private var loading = false
     @State private var showCreate = false
@@ -66,7 +68,8 @@ struct SharesView: View {
         }
         .onAppear { Task { await load() } }
         .sheet(isPresented: $showCreate) {
-            ShareCreateDialog(onCreated: { c in created = c; Task { await load() } })
+            ShareCreateDialog(presetDeviceId: presetDeviceId,
+                              onCreated: { c in created = c; Task { await load() } })
                 .environmentObject(scope)
         }
         .sheet(isPresented: Binding(get: { created != nil }, set: { if !$0 { created = nil } })) {
@@ -216,6 +219,8 @@ struct FlexibleChips<Item: Hashable, Content: View>: View {
 struct ShareCreateDialog: View {
     @EnvironmentObject private var scope: UserScope
     @Environment(\.dismiss) private var dismiss
+    /// 预选设备 ID（设备长按菜单进入时直接锁定目标）
+    var presetDeviceId: String? = nil
     var onCreated: (ShareCreated) -> Void
 
     @State private var deviceId = ""
@@ -269,6 +274,10 @@ struct ShareCreateDialog: View {
                 }
             }
             .navigationTitle("新建分享")
+        .onAppear {
+            // 从设备长按菜单进入：直接锁定目标设备（对齐 Android Routes.shares(id, create=true)）
+            if deviceId.isEmpty, let preset = presetDeviceId { deviceId = preset }
+        }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }

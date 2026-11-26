@@ -12,6 +12,9 @@
 @interface RTCStatistics : NSObject
 @property (nonatomic, readonly) NSString *id;
 @property (nonatomic, readonly) NSString *type;
+// 时间戳是独立属性（微秒 double），不在 values 字典里——漏掉它会导致
+// Swift 侧差分永远没有 dt，码率/解码/抖动缓冲/丢包全部恒 0
+@property (nonatomic, readonly) double timestampUs;
 @property (nonatomic, readonly) NSDictionary *values;
 @end
 
@@ -44,6 +47,10 @@ static NSString * const kRecordSep = @"\x1F";
                 if (![st isKindOfClass:[RTCStatistics class]]) continue;
                 RTCStatistics *stat = st;
                 NSString *type = stat.type ?: @"";
+                // timestampUs：独立属性，压平为 timestamp_us 键
+                [records addObject:[NSString stringWithFormat:
+                    @"%@%@%@%@timestamp_us%@%.0f",
+                    statId, kRecordSep, type, kRecordSep, kRecordSep, stat.timestampUs]];
                 NSDictionary *values = stat.values;
                 if (!values) continue;
                 for (id vkObj in values) {
