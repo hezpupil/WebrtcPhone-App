@@ -61,13 +61,13 @@ import com.webrtc_phone.android.ui.home.CameraResolutions
 import com.webrtc_phone.android.ui.home.lensOptions
 import kotlin.math.roundToInt
 
-/** 虚拟导航键：返回 / 主页 / 多任务（长按主页 = 语音助手，长按返回 = 菜单） */
+/** 虚拟导航键：多任务 / 主页 / 返回（长按主页 = 语音助手，长按返回 = 菜单）。返回键在右侧（用户习惯） */
 @Composable
 fun NavKeys(vm: StreamViewModel, vertical: Boolean) {
     val items = listOf(
-        Triple(Icons.AutoMirrored.Filled.ArrowBack, "返回", Keys.BACK),
-        Triple(Icons.Filled.Circle, "主页", Keys.HOME),
         Triple(Icons.Filled.Menu, "多任务", Keys.APP_SWITCH),
+        Triple(Icons.Filled.Circle, "主页", Keys.HOME),
+        Triple(Icons.AutoMirrored.Filled.ArrowBack, "返回", Keys.BACK),
     )
     val content: @Composable (Modifier) -> Unit = { m ->
         items.forEach { (icon, label, key) ->
