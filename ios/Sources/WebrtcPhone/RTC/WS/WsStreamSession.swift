@@ -12,7 +12,7 @@ final class WsStreamSession: ObservableObject {
     @Published private(set) var firstFrame = false
     @Published private(set) var stats = StreamStats()
 
-    private let target: StreamTarget
+    let target: StreamTarget
     private let httpFactory: HttpClientFactory
 
     private var session: URLSession?
@@ -337,16 +337,16 @@ private final class H264Decoder {
     }
 }
 
-/// C 函数指针输出回调：refcon → H264Decoder.emit（CVPixelBuffer；丢弃/出错时忽略）
+/// C 函数指针输出回调（VT 内部线程）：有效帧 → emit（CVPixelBuffer；丢弃/出错时忽略）
 private func h264OutputCallback(_ refcon: UnsafeMutableRawPointer?,
-                                _ flags: UnsafePointer<VTDecodeFrameFlags>?,
-                                _ info: UnsafePointer<VTDecodeInfoFlags>?,
-                                _ imageBuffer: CVImageBuffer?,
+                                _ sourceFrameRefCon: UnsafeMutableRawPointer?,
                                 _ status: OSStatus,
-                                _ pts: UnsafePointer<CMTime>?,
-                                _ duration: UnsafePointer<CMTime>?) {
+                                _ infoFlags: VTDecodeInfoFlags,
+                                _ imageBuffer: CVImageBuffer?,
+                                _ pts: CMTime,
+                                _ duration: CMTime) {
     guard status == noErr, let imageBuffer, let refcon else { return }
-    if let info, info.pointee.contains(.frameDropped) { return }
+    if infoFlags.contains(.frameDropped) { return }
     Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue().emit(imageBuffer)
 }
 

@@ -105,10 +105,10 @@ final class H264FrameRenderer: NSObject, MTKViewDelegate {
         }
         // Metal UV 原点在左上：uv(0,0) → 视口顶部 (y=+1)
         let quad: [SIMD4<Float>] = [
-            SIMD4(Float(-qw), Float(1), 0, 0),
-            SIMD4(Float(qw), Float(1), 1, 0),
-            SIMD4(Float(-qw), Float(-1), 0, 1),
-            SIMD4(Float(qw), Float(-1), 1, 1),
+            SIMD4(Float(-qw), Float(qh), 0, 0),
+            SIMD4(Float(qw), Float(qh), 1, 0),
+            SIMD4(Float(-qw), Float(-qh), 0, 1),
+            SIMD4(Float(qw), Float(-qh), 1, 1),
         ]
         guard let vbuf = device.makeBuffer(bytes: quad, length: MemoryLayout<SIMD4<Float>>.stride * 4) else { return }
 

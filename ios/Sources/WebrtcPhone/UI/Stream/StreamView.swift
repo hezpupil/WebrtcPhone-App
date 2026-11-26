@@ -308,7 +308,8 @@ struct StreamView: View {
 
     private func connectWs(_ target: StreamTarget) {
         if wsRenderer == nil {
-            guard let r = H264FrameRenderer(device: MTLCreateSystemDefaultDevice()) else {
+            guard let dev = MTLCreateSystemDefaultDevice(),
+                  let r = H264FrameRenderer(device: dev) else {
                 phase = .failed(message: "解码渲染初始化失败", retryable: false)
                 return
             }
@@ -333,10 +334,10 @@ struct StreamView: View {
     }
 
     private func subscribeWs(_ ws: WsStreamSession) {
-        ws.$phase.receive(on: DispatchQueue.main).sink { [weak self] p in self?.phase = p }.store(in: &subs)
-        ws.$firstFrame.receive(on: DispatchQueue.main).sink { [weak self] v in self?.firstFrame = v }.store(in: &subs)
-        ws.$stats.receive(on: DispatchQueue.main).sink { [weak self] v in self?.stats = v }.store(in: &subs)
-        ws.$videoSize.receive(on: DispatchQueue.main).sink { [weak self] v in self?.videoSize = v }.store(in: &subs)
+        ws.$phase.receive(on: DispatchQueue.main).sink { self.phase = $0 }.store(in: &subs)
+        ws.$firstFrame.receive(on: DispatchQueue.main).sink { self.firstFrame = $0 }.store(in: &subs)
+        ws.$stats.receive(on: DispatchQueue.main).sink { self.stats = $0 }.store(in: &subs)
+        ws.$videoSize.receive(on: DispatchQueue.main).sink { self.videoSize = $0 }.store(in: &subs)
     }
 
     private func subscribeSession(_ s: RtcSession?) {
