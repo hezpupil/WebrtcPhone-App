@@ -1,6 +1,7 @@
 import Foundation
 import WebRTC
 import AVFoundation
+import Network
 
 // 便捷埋点
 private func trail(_ event: String) { Trail.mark(event) }
@@ -43,6 +44,14 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private var interruptTimer: DispatchSourceTimer?
     private var closed = false
     /// getStats 已弃用：报告的 ObjC 桥接层存在数据依赖性 SIGTRAP（详见 onConnected 注释）
+
+    // 统计面板数据源（getStats 替代品，均在 queue 上读写）
+    /// 网络类型标签（NWPathMonitor）：WiFi / 蜂窝数据 / 有线
+    private var networkLabel = ""
+    /// ICE 传输协议提示（从 candidate sdp 解析）：udp / tcp
+    private var transportHint = ""
+    private let pathMonitor = NWPathMonitor()
+    private var networkMonitorStarted = false
 
     private let frameSink = FrameSink()
     private let frameLock = NSLock()
@@ -186,6 +195,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
         closed = true
         trail("rtc:teardown phase=\(final)")
         [statsTimer, connectTimer, firstFrameTimer, interruptTimer].forEach { $0?.cancel() }
+        if networkMonitorStarted { pathMonitor.cancel() }
         signaling?.close(); signaling = nil
         frameLock.lock(); renderer = nil; frameLock.unlock()
         inputReadySubject.send(false)
@@ -379,7 +389,15 @@ extension RtcSession: SignalingClient.Listener {
                 Self.trailAnswerVideoCodecs(answer.sdp)
                 p.setLocalDescription(answer) { error in
                     if let error { self.post { self.fail("SDP 协商失败：\(error.localizedDescription)", retryable: true) }; return }
-                    self.post { self.signaling?.send(SignalingProtocol.answer(self.target.deviceId, sdp: answer.sdp)); trail("sig:answer-sent") }
+                    self.post {
+                        // 编码器信息进统计面板（对齐 Android InfoPanel "编码" 行）
+                        if let codec = RtcSession.preferredVideoCodec(answer.sdp) {
+                            self.lastStats.codec = codec
+                            self.lastStats.decoder = ["H264", "H265"].contains(codec.uppercased()) ? "VideoToolbox" : "软件解码"
+                            self.statsSubject.send(self.lastStats)
+                        }
+                        self.signaling?.send(SignalingProtocol.answer(self.target.deviceId, sdp: answer.sdp)); trail("sig:answer-sent")
+                    }
                 }
             }
         }
@@ -419,6 +437,59 @@ extension RtcSession: SignalingClient.Listener {
             }
         }
         trail("sdp:video-codecs " + lines.joined(separator: " | "))
+    }
+
+    /// 从 answer SDP 提取协商的首选视频编码器名（m=video 的 payload 列表按优先级排列）
+    private static func preferredVideoCodec(_ sdp: String) -> String? {
+        var pts: [String] = []
+        var ptCodec: [String: String] = [:]
+        for line in sdp.components(separatedBy: "\r\n") {
+            if line.hasPrefix("m=video") {
+                let seg = line.split(separator: " ")
+                pts = seg.dropFirst(3).map(String.init)
+            } else if line.hasPrefix("a=rtpmap:") {
+                let body = line.dropFirst("a=rtpmap:".count)
+                let parts = body.split(separator: " ")
+                if parts.count >= 2 {
+                    // "H264/90000" → "H264"
+                    ptCodec[String(parts[0])] = String(parts[1].split(separator: "/").first ?? "")
+                }
+            }
+        }
+        for pt in pts {
+            if let name = ptCodec[pt], ["H264", "H265", "VP8", "VP9", "AV1"].contains(name.uppercased()) {
+                return name
+            }
+        }
+        return nil
+    }
+
+    /// 从 candidate sdp 记录传输协议（udp 优先作为代表，与实际选中候选对可能不完全一致）
+    private func noteTransport(_ candidateSdp: String) {
+        let tokens = candidateSdp.split(separator: " ")
+        guard tokens.count > 2 else { return }
+        let t = tokens[2].lowercased()
+        if t == "udp" { transportHint = "udp" }
+        else if t == "tcp" && transportHint.isEmpty { transportHint = "tcp" }
+    }
+
+    /// 网络类型监视（WiFi / 蜂窝数据 / 有线），结果写入 networkLabel 供统计面板使用
+    private func startNetworkMonitor() {
+        guard !networkMonitorStarted else { return }
+        networkMonitorStarted = true
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let label: String
+            if path.status == .satisfied {
+                if path.usesInterfaceType(.wifi) { label = "WiFi" }
+                else if path.usesInterfaceType(.cellular) { label = "蜂窝数据" }
+                else if path.usesInterfaceType(.wiredEthernet) { label = "有线" }
+                else if path.usesInterfaceType(.loopback) { label = "本地" }
+                else { label = "已连接" }
+            } else { label = "" }
+            self.post { self.networkLabel = label }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "webrtc.session.netmon"))
     }
 
     /// 从 SDP 中移除音频 m-line 段（含 BUNDLE 清理），用于无音频降级连接。
@@ -469,6 +540,7 @@ extension RtcSession: SignalingClient.Listener {
     }
 
     private func addRemoteCandidate(_ c: CandidateSpec) {
+        noteTransport(c.candidate)
         let ice = RTCIceCandidate(sdp: c.candidate,
                                   sdpMLineIndex: Int32(c.sdpMLineIndex),
                                   sdpMid: c.sdpMid ?? "0")
@@ -480,6 +552,7 @@ extension RtcSession: SignalingClient.Listener {
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         post { [weak self] in
             guard let self else { return }
+            self.noteTransport(candidate.sdp)
             let spec = CandidateSpec(sdpMid: candidate.sdpMid,
                                      sdpMLineIndex: Int(candidate.sdpMLineIndex),
                                      candidate: candidate.sdp)
@@ -548,6 +621,7 @@ extension RtcSession: SignalingClient.Listener {
             }
         }
         if statsTimer == nil {
+            startNetworkMonitor()
             // 自研统计：fps 来自帧回调计数、尺寸来自视频流，完全不触碰 getStats。
             // 背景：getStats 报告的 ObjC 桥接层在特定报告内容下触发 SIGTRAP（第 4~6 个
             // 回调时数据依赖性崩溃，dSYM 符号化 + 全量数值防御均无法根除），故移除。
@@ -565,6 +639,8 @@ extension RtcSession: SignalingClient.Listener {
                     s.height = size.1
                 }
                 if fps == 0 { s.bitrateBps = 0 }
+                s.networkLabel = self.networkLabel
+                s.protocolName = self.transportHint
                 self.lastStats = s
                 self.statsSubject.send(s)
                 statTicks += 1

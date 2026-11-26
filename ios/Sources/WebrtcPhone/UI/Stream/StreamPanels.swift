@@ -559,12 +559,25 @@ struct TerminalBottomPanel: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id(i)
                         }
+                        // 底部锚点：比滚到最后一行行号更可靠
+                        Color.clear.frame(height: 1).id("term-bottom")
                     }
                     .padding(8)
                 }
                 .background(Color.black)
-                .onChange(of: lines.count) { _ in
-                    if let last = lines.indices.last { proxy.scrollTo(last, anchor: .bottom) }
+                // LazyVStack 新行布局晚于 scrollTo，立即滚会丢；延迟滚动到锚点。
+                // 用 lines（而非 lines.count）做触发：原地追加内容（无换行）也能跟随。
+                .onChange(of: lines) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo("term-bottom", anchor: .bottom)
+                        }
+                    }
+                }
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo("term-bottom", anchor: .bottom)
+                    }
                 }
             }
 
