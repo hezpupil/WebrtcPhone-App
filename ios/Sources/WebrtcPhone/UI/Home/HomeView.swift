@@ -5,36 +5,50 @@ struct HomeView: View {
     @EnvironmentObject private var scope: UserScope
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab = 0
+    /// 独立投屏页状态（对齐 Android StreamActivity）：置于 TabView 之上的全屏层，
+    /// 彻底覆盖底部导航栏，只能通过投屏页内的返回/结束投屏退出
+    @State private var streaming: Device?
 
     var body: some View {
-        TabView(selection: $tab) {
-            NavigationStack { DevicesTab() }
-                .tabItem { Label("设备", systemImage: "rectangle.grid.2x2") }.tag(0)
-            NavigationStack { ManageTab() }
-                .tabItem { Label("管理", systemImage: "slider.horizontal.3") }.tag(1)
-            NavigationStack { MeTab(onGoManage: { tab = 1 }) }
-                .tabItem { Label("我的", systemImage: "person.circle") }.tag(2)
+        ZStack {
+            TabView(selection: $tab) {
+                NavigationStack { DevicesTab(onStream: { streaming = $0 }) }
+                    .tabItem { Label("设备", systemImage: "rectangle.grid.2x2") }.tag(0)
+                NavigationStack { ManageTab() }
+                    .tabItem { Label("管理", systemImage: "slider.horizontal.3") }.tag(1)
+                NavigationStack { MeTab(onGoManage: { tab = 1 }) }
+                    .tabItem { Label("我的", systemImage: "person.circle") }.tag(2)
+            }
+            .onChange(of: tab) { _ in
+                scope.devices.setActive(tab == 0 && streaming == nil)
+            }
+            .onAppear { scope.devices.setActive(streaming == nil) }
+
+            if let device = streaming {
+                StreamView(device: device, scope: scope, container: container) {
+                    streaming = nil
+                }
+                .transition(.opacity)
+            }
         }
-        .onChange(of: tab) { _ in
-            scope.devices.setActive(tab == 0)
-        }
-        .onAppear { scope.devices.setActive(true) }
-        // App 层只负责进后台关轮询（WebrtcPhoneApp）；回前台必须在这里恢复，
-        // 否则切后台回来后轮询与 WS 全停，设备列表永远不再自动刷新
         .onChange(of: scenePhase) { phase in
-            if phase == .active && tab == 0 { scope.devices.setActive(true) }
+            // App 层只负责进后台关轮询（WebrtcPhoneApp）；回前台必须在这里恢复，
+            // 否则切后台回来后轮询与 WS 全停，设备列表永远不再自动刷新。
+            // 投屏中不恢复（StreamView 已主动关掉轮询，避免与视频流抢带宽）
+            if phase == .active && tab == 0 && streaming == nil { scope.devices.setActive(true) }
         }
     }
 }
 
 // MARK: - 设备大盘
 struct DevicesTab: View {
+    /// 连接并投屏回调（投屏页由 HomeView 顶层全屏承载，覆盖 TabBar）
+    let onStream: (Device) -> Void
     @EnvironmentObject private var container: AppContainer
     @EnvironmentObject private var scope: UserScope
     @State private var search = ""
     @State private var statusFilter = 0 // 0 全部 / 1 在线 / 2 使用中 / 3 离线
     @State private var selected: Device?
-    @State private var linkDevice: Device?
 
     private enum StatusFilter: String, CaseIterable {
         case all = "全部", online = "在线", inUse = "使用中", offline = "离线"
@@ -77,14 +91,7 @@ struct DevicesTab: View {
     }
 
     var body: some View {
-        // 独立投屏页（对齐 Android StreamActivity）：条件渲染直接替换整个视图树，
-        // 不经过 sheet/cover 层级——没有下拉手势、不会"浮在页面上"，
-        // 只能通过投屏页内的"返回"或"结束投屏"退出
-        if let device = linkDevice {
-            StreamView(device: device, scope: scope, container: container) { linkDevice = nil }
-        } else {
-            mainTab
-        }
+        mainTab
     }
 
     private var mainTab: some View {
@@ -174,7 +181,7 @@ struct DevicesTab: View {
             }
         }
         .sheet(item: $selected) { device in
-            DeviceActionsSheet(device: device, onStream: { linkDevice = device })
+            DeviceActionsSheet(device: device, onStream: { onStream(device) })
         }
         .refreshable { await scope.devices.refresh() }
     }
