@@ -43,7 +43,8 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private var firstFrameTimer: DispatchSourceTimer?
     private var interruptTimer: DispatchSourceTimer?
     private var closed = false
-    /// getStats 已弃用：报告的 ObjC 桥接层存在数据依赖性 SIGTRAP（详见 onConnected 注释）
+    /// getStats 已改由 ObjC 桥恢复（LegacyStatsBridge）：Swift 原生 API 的报告
+    /// 桥接层存在数据依赖性 SIGTRAP（详见 onConnected 注释），ObjC 直调无该崩溃类
 
     // 统计面板数据源（getStats 替代品，均在 queue 上读写）
     /// 网络类型标签（NWPathMonitor）：WiFi / 蜂窝数据 / 有线
@@ -52,6 +53,10 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate {
     private var transportHint = ""
     private let pathMonitor = NWPathMonitor()
     private var networkMonitorStarted = false
+
+    // getStats（ObjC 桥）：每 2 秒拉取一次延迟/码率/丢包/抖动
+    private var legacyStats = LegacyStatsParser()
+    private var statsTick = 0
 
     private let frameSink = FrameSink()
     private let frameLock = NSLock()
@@ -473,6 +478,37 @@ extension RtcSession: SignalingClient.Listener {
         else if t == "tcp" && transportHint.isEmpty { transportHint = "tcp" }
     }
 
+    /// ObjC 桥直调 getStats（LegacyStatsBridge）。Swift 原生 API 的报告桥接层存在
+    /// Double→Int 插桩 brk（见 onConnected 注释），ObjC 路径全程字符串转换，
+    /// 不含该崩溃类；可在设置「连接统计 (实验)」中关闭。
+    private func pollLegacyStats() {
+        guard !closed, target.settings.legacyStats, let pc else { return }
+        LegacyStatsBridge.collect(pc) { [weak self] report in
+            guard let self, !self.closed, !report.isEmpty else {
+                if report.isEmpty { trail("stats:legacy empty") }
+                return
+            }
+            self.post {
+                guard !self.closed else { return }
+                var s = self.lastStats
+                let c = self.legacyStats.compute(report)
+                s.rttMs = c.rttMs
+                s.bitrateBps = c.bitrateBps
+                s.packetLossPct = c.packetLossPct
+                s.jitterMs = c.jitterMs
+                s.decodeMs = c.decodeMs
+                s.jitterBufferMs = c.jitterBufferMs
+                s.framesDropped = c.framesDropped
+                if !c.codec.isEmpty { s.codec = c.codec }
+                if !c.decoder.isEmpty { s.decoder = c.decoder }
+                if !c.candidateType.isEmpty { s.candidateType = c.candidateType }
+                if !c.protocolName.isEmpty { s.protocolName = c.protocolName }
+                self.lastStats = s
+                self.statsSubject.send(s)
+            }
+        }
+    }
+
     /// 网络类型监视（WiFi / 蜂窝数据 / 有线），结果写入 networkLabel 供统计面板使用
     private func startNetworkMonitor() {
         guard !networkMonitorStarted else { return }
@@ -622,9 +658,10 @@ extension RtcSession: SignalingClient.Listener {
         }
         if statsTimer == nil {
             startNetworkMonitor()
-            // 自研统计：fps 来自帧回调计数、尺寸来自视频流，完全不触碰 getStats。
-            // 背景：getStats 报告的 ObjC 桥接层在特定报告内容下触发 SIGTRAP（第 4~6 个
-            // 回调时数据依赖性崩溃，dSYM 符号化 + 全量数值防御均无法根除），故移除。
+            // fps 来自帧回调计数、尺寸来自视频流；延迟/码率/丢包/抖动由 ObjC 桥的
+            // getStats 恢复（每 2 秒）。背景：Swift 原生 statistics API 的报告桥接层
+            // 在特定报告内容下触发 SIGTRAP（第 4~6 个回调时崩溃，反汇编确认 trap 为
+            // Swift Double→Int 插桩 brk），Swift 路径弃用，ObjC 直调路径无该问题。
             var statTicks = 0
             statsTimer = scheduleRepeating(seconds: 1) { [weak self] in
                 guard let self, !self.closed else { return }
@@ -647,6 +684,8 @@ extension RtcSession: SignalingClient.Listener {
                 if statTicks % 3 == 0 {
                     trail("stats: fps=\(s.fps) \(s.width)x\(s.height)")
                 }
+                // getStats（ObjC 桥）每 2 秒一次：恢复延迟/码率/丢包/抖动字段
+                if statTicks % 2 == 0 { self.pollLegacyStats() }
             }
         }
     }

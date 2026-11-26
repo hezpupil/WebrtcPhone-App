@@ -56,6 +56,9 @@ struct StreamSettings: Codable, Equatable {
     // TrollStore/侧载安装的环境下 TCC 弹窗不显示会导致连接永久卡死（或直接 abort）
     var audio = false
     var powerOff = false
+    /// 实验性 getStats 连接统计（ObjC 桥直调，恢复延迟/码率/丢包/抖动）。
+    /// 出现统计相关闪退时可在设置里关闭。
+    var legacyStats = true
 
     func withPreset(_ p: QualityPreset) -> StreamSettings {
         var s = self
@@ -113,6 +116,7 @@ final class SettingsRepository: ObservableObject {
         }
         s.audio = defaults.object(forKey: "s_audio") as? Bool ?? s.audio
         s.powerOff = defaults.object(forKey: "s_power_off") as? Bool ?? s.powerOff
+        s.legacyStats = defaults.object(forKey: "s_legacy_stats") as? Bool ?? s.legacyStats
         self.stream = s
 
         var a = AppSettings()
@@ -142,6 +146,7 @@ final class SettingsRepository: ObservableObject {
         defaults.set(s.maxBitrateMbps, forKey: "s_max_bitrate")
         defaults.set(s.audio, forKey: "s_audio")
         defaults.set(s.powerOff, forKey: "s_power_off")
+        defaults.set(s.legacyStats, forKey: "s_legacy_stats")
     }
 
     func resetStream() { updateStream { $0 = StreamSettings() } }

@@ -89,6 +89,13 @@ struct StreamSettingsView: View {
                                              set: { v in container.settings.updateStream { $0.powerOff = v } })) {
                             Text("开启息屏连接").font(.system(size: 14))
                         }.tint(AppColors.brand)
+                        Toggle(isOn: Binding(get: { stream.legacyStats },
+                                             set: { v in container.settings.updateStream { $0.legacyStats = v } })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("连接统计 (实验)").font(.system(size: 14))
+                                Text("每 2 秒采集一次延迟/码率/丢包/抖动，投屏页连接信息可见；如遇闪退可关闭").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }.tint(AppColors.brand)
                     }
                     .padding(14)
                 }

@@ -440,6 +440,8 @@ struct InfoSheet: View {
             ("延迟", stats.latencyMs > 0 ? "\(stats.latencyMs) ms (RTT \(stats.rttMs) ms)" : "-"),
             ("帧率", "\(stats.fps) fps"),
             ("码率", bitrate),
+            ("丢包", String(format: "%.1f%%", stats.packetLossPct)),
+            ("抖动缓冲", "\(stats.jitterBufferMs) ms · 解码 \(stats.decodeMs) ms"),
             ("丢帧", "\(stats.framesDropped)"),
         ]
     }
