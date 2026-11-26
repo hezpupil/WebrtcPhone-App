@@ -28,11 +28,11 @@ struct LegacyStatsParser {
     }
 
     private static func int(_ s: String?) -> Int {
-        id(num(s))
+        idbl(num(s))
     }
 
     /// Double → Int 唯一直转入口：isFinite + 非负 + 上限三重检查后人工转换
-    private static func id(_ d: Double) -> Int {
+    private static func idbl(_ d: Double) -> Int {
         d.isFinite && d >= 0 && d <= 9e15 ? Int(d) : 0
     }
 
@@ -81,7 +81,7 @@ struct LegacyStatsParser {
         return nil
     }
 
-    private static func extractVideo(_ report: Report) -> StreamStats? {
+    private mutating func extractVideo(_ report: Report) -> StreamStats? {
         guard let video = videoEntry(report) else { return nil }
         let m = video
         let ts = num(m["timestamp_us"]) / 1_000_000.0
@@ -95,30 +95,30 @@ struct LegacyStatsParser {
 
         var out = StreamStats()
         out.fps = int(m["framesPerSecond"])
-        out.framesDropped = Int64(int(m["framesDropped"]))
+        out.framesDropped = Int64(int(m["framesDropped"]))  // int() 已过三重检查
         out.width = int(m["frameWidth"])
         out.height = int(m["frameHeight"])
-        out.jitterMs = id(num(m["jitter"]) * 1000)
+        out.jitterMs = Self.idbl(num(m["jitter"]) * 1000)
 
         let dt = max(0, ts - lastTs)
         let dBytes = max(0, bytes - lastBytes)
         if lastTs > 0 && dt > 0 {
-            out.bitrateBps = Int64(dBytes * 8 / dt)
+            out.bitrateBps = Int64(Self.idbl(dBytes * 8 / dt))
         }
         let dFrames = max(0, framesDecoded - lastFramesDecoded)
         let dTime = max(0, decodeTime - lastDecodeTime)
         if dFrames > 0 {
-            out.decodeMs = id(dTime / dFrames * 1000)
+            out.decodeMs = Self.idbl(dTime / dFrames * 1000)
         }
         let dEmitted = max(0, jbEmitted - lastJbEmitted)
         let dJb = max(0, jbDelay - lastJbDelay)
         if dEmitted > 0 {
-            out.jitterBufferMs = id(dJb / dEmitted * 1000)
+            out.jitterBufferMs = Self.idbl(dJb / dEmitted * 1000)
         }
         let dLost = max(0, lost - lastPacketsLost)
         let dRecv = max(0, recv - lastPacketsReceived)
         if dLost + dRecv > 0 {
-            out.packetLossPct = Float(dLost * 100 / (dLost + dRecv))
+            out.packetLossPct = Float(Self.idbl(dLost * 100 / (dLost + dRecv)))
         }
 
         lastTs = ts; lastBytes = bytes; lastFramesDecoded = framesDecoded
@@ -138,10 +138,10 @@ struct LegacyStatsParser {
     mutating func compute(_ report: Report) -> StreamStats {
         var out = StreamStats()
         let pair = Self.extractPair(report)
-        out.rttMs = Self.id(pair.rtt * 1000)
+        out.rttMs = Self.idbl(pair.rtt * 1000)
         out.candidateType = pair.cand
         out.protocolName = pair.proto
-        if let v = Self.extractVideo(report) {
+        if let v = extractVideo(report) {
             out.fps = v.fps
             out.bitrateBps = v.bitrateBps
             out.width = v.width
