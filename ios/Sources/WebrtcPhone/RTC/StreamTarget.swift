@@ -71,14 +71,9 @@ struct StreamStats: Equatable {
         if rttMs == 0 && jitterBufferMs == 0 { return 0 }
         return rttMs / 2 + jitterBufferMs + decodeMs + 8
     }
-    var networkLabel: String {
-        switch candidateType {
-        case "host": return "局域网直连"
-        case "srflx", "prflx": return "P2P 穿透"
-        case "relay": return "TURN 中继"
-        default: return ""
-        }
-    }
+    /// 网络类型标签（NWPathMonitor）：WiFi / 蜂窝数据 / 有线；getStats 移除后
+    /// 不再能从 candidateType 推导，改为会话主动上报的存储字段
+    var networkLabel = ""
 }
 
 // MARK: - StreamTarget
