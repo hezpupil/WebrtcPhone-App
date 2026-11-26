@@ -76,7 +76,7 @@ struct FilePanel: View {
             }
             .onAppear { Task { await load() } }
         }
-        .presentationDetents([.large])
+        // detents 由宿主 sheetContent 统一声明（.large），此处不再重复
     }
 
     private func load() async {

@@ -122,7 +122,7 @@ struct StreamView: View {
             // 可拖动悬浮球：点击工具面板，长按设备抽屉
             if !showTerminal && !keyboardMode {
                 FloatingBall(
-                    onClick: { panel = .tools },
+                    onClick: { presentPanel(.tools) },
                     onLongClick: canSwitchDevices ? { openDrawer() } : nil
                 )
             }
@@ -191,7 +191,15 @@ struct StreamView: View {
         }
         .statusBarHidden(true)
         .animation(.easeInOut(duration: 0.2), value: drawerOpen)
-        .sheet(item: $panel) { p in sheetContent(p) }
+        // 派生 isPresented 而非 .sheet(item:)：item 模式下 dismiss()/下滑关闭不会清空
+        // 绑定，父视图每次重建（stats 每秒一更）都会把浮层重新弹出，形成
+        // "弹出→缩回→再弹出"死循环；派生绑定的 set 关闭时必清 panel。
+        .sheet(isPresented: Binding(
+            get: { panel != nil },
+            set: { if !$0 { panel = nil } }
+        )) {
+            if let p = panel { sheetContent(p) }
+        }
         .onAppear {
             // 对齐 Android：投屏期间停掉设备大盘轮询/快照拉取，避免与视频流抢带宽
             scope.devices.setActive(false)
@@ -294,6 +302,21 @@ struct StreamView: View {
 
     // MARK: - 面板
 
+    /// 安全切换面板。已有 sheet 在展示时先收起、等收起动画结束再弹新的——
+    /// 原地换 item 会触发 iOS 的 dismiss→present 竞态，表现为浮层反复弹出收回。
+    private func presentPanel(_ p: StreamPanel?) {
+        if panel == nil {
+            panel = p
+            return
+        }
+        panel = nil
+        guard p != nil else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            panel = p
+        }
+    }
+
     @ViewBuilder
     private func sheetContent(_ p: StreamPanel) -> some View {
         switch p {
@@ -332,7 +355,7 @@ struct StreamView: View {
                 .presentationDetents([.medium])
         case .apps:
             AppsSheet(client: session?.files.value,
-                      onOpenFiles: { panel = .files },
+                      onOpenFiles: { presentPanel(.files) },
                       toast: { toast($0) },
                       allowFileTx: session?.target.allowFileTx ?? false)
                 .presentationDetents([.medium])
@@ -378,7 +401,7 @@ struct StreamView: View {
                     keyboardMode.toggle()
                 },
                 ToolItem(label: "文本下发", icon: "text.alignleft", enabled: control && !projection) {
-                    panel = .text
+                    presentPanel(.text)
                 },
                 ToolItem(label: "发送剪贴板", icon: "doc.on.doc.fill",
                          enabled: control && allowClip && !projection) {
@@ -394,24 +417,25 @@ struct StreamView: View {
             ("工具", [
                 ToolItem(label: "文件", icon: "folder",
                          enabled: connected && (session?.target.allowFileTx ?? false) && !viewOnly) {
-                    panel = .files
+                    presentPanel(.files)
                 },
                 ToolItem(label: "安装应用", icon: "square.grid.2x2",
                          enabled: connected && (session?.target.allowFileTx ?? false) && !viewOnly) {
-                    panel = .apps
+                    presentPanel(.apps)
                 },
                 ToolItem(label: "终端", icon: "terminal",
                          enabled: connected && (session?.target.allowTerminal ?? false) && !viewOnly) {
+                    presentPanel(nil)
                     showTerminal = true
                 },
             ]),
             ("画面与连接", [
                 ToolItem(label: "切换设备", icon: "arrow.left.arrow.right",
                          enabled: canSwitchDevices) {
-                    panel = nil
+                    presentPanel(nil)
                     openDrawer()
                 },
-                ToolItem(label: "画质", icon: "slider.horizontal.3") { panel = .quality },
+                ToolItem(label: "画质", icon: "slider.horizontal.3") { presentPanel(.quality) },
                 ToolItem(label: audioOn ? "声音开" : "已静音",
                          icon: audioOn ? "speaker.wave.3" : "speaker.slash",
                          enabled: true, active: !audioOn) {
@@ -423,7 +447,7 @@ struct StreamView: View {
                          enabled: true, active: container.settings.app.showStats) {
                     container.settings.updateApp { $0.showStats.toggle() }
                 },
-                ToolItem(label: "连接信息", icon: "info.circle") { panel = .info },
+                ToolItem(label: "连接信息", icon: "info.circle") { presentPanel(.info) },
                 ToolItem(label: "全屏模式", icon: "arrow.up.left.and.arrow.down.right",
                          enabled: true, active: fullscreen) {
                     panel = nil

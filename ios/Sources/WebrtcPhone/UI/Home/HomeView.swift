@@ -180,8 +180,18 @@ struct DevicesTab: View {
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
-        .sheet(item: $selected) { device in
-            DeviceActionsSheet(device: device, onStream: { onStream(device) })
+        // 派生 isPresented（同 StreamView）：item 模式下 dismiss()/下滑不清空绑定，
+        // 点"连接并投屏"后 sheet 仍挂在 StreamView 底下反复重弹
+        .sheet(isPresented: Binding(
+            get: { selected != nil },
+            set: { if !$0 { selected = nil } }
+        )) {
+            if let device = selected {
+                DeviceActionsSheet(device: device, onStream: {
+                    selected = nil
+                    onStream(device)
+                })
+            }
         }
         .refreshable { await scope.devices.refresh() }
     }

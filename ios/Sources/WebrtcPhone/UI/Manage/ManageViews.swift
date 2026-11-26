@@ -488,12 +488,16 @@ struct UsersView: View {
         .sheet(isPresented: $showCreate) {
             CreateUserDialog { Task { await load() } }.environmentObject(scope)
         }
-        .sheet(item: $detailUser) { user in
-            UserDetailSheet(user: user) { Task { await load() } }.environmentObject(scope)
+        .sheet(isPresented: Binding(get: { detailUser != nil }, set: { if !$0 { detailUser = nil } })) {
+            if let user = detailUser {
+                UserDetailSheet(user: user) { Task { await load() } }.environmentObject(scope)
+            }
         }
-        .sheet(item: $leaseDialogUser) { user in
-            CreateLeaseSheet(username: user.username) { Task { await load() } }
-                .environmentObject(scope)
+        .sheet(isPresented: Binding(get: { leaseDialogUser != nil }, set: { if !$0 { leaseDialogUser = nil } })) {
+            if let user = leaseDialogUser {
+                CreateLeaseSheet(username: user.username) { Task { await load() } }
+                    .environmentObject(scope)
+            }
         }
     }
 
@@ -964,7 +968,8 @@ struct UserDetailSheet: View {
                 }
                 .environmentObject(scope)
             }
-            .sheet(item: $extendLease) { lease in
+            .sheet(isPresented: Binding(get: { extendLease != nil }, set: { if !$0 { extendLease = nil } })) {
+                if let lease = extendLease {
                 DurationPickSheet(title: "租约展期",
                                   message: "为设备 \(lease.deviceId) 延长租期。当前租约剩余：\(lease.isPermanent ? "永久有效" : Formatters.duration(lease.remainingSeconds))",
                                   options: Durations.leaseExtend, confirmText: "确认展期") { seconds in
@@ -973,13 +978,16 @@ struct UserDetailSheet: View {
                         await loadLeases(); onChanged()
                     }
                 }
+                }
             }
-            .sheet(item: $noteLease) { lease in
+            .sheet(isPresented: Binding(get: { noteLease != nil }, set: { if !$0 { noteLease = nil } })) {
+                if let lease = noteLease {
                 TextInputDialog(title: "修改租约备注", label: "租约备注（如订单号/渠道）", initial: lease.note) { note in
                     Task {
                         try? await scope.api.updateLeaseNote(lease.leaseId, note: note)
                         await loadLeases(); onChanged()
                     }
+                }
                 }
             }
             .confirmationDialog("收回设备租约", isPresented: Binding(get: { revokeLease != nil },
@@ -1635,9 +1643,11 @@ struct TagsView: View {
             }
         }
         .onAppear { Task { await scope.devices.loadMeta() } }
-        .sheet(item: $editTag) { tag in
-            TagEditDialog(tag: tag, isNew: isNewTag) { Task { await scope.devices.loadMeta() } }
-                .environmentObject(scope)
+        .sheet(isPresented: Binding(get: { editTag != nil }, set: { if !$0 { editTag = nil } })) {
+            if let tag = editTag {
+                TagEditDialog(tag: tag, isNew: isNewTag) { Task { await scope.devices.loadMeta() } }
+                    .environmentObject(scope)
+            }
         }
         .confirmationDialog("删除标签", isPresented: Binding(get: { deleteTag != nil },
                                                           set: { if !$0 { deleteTag = nil } }),
