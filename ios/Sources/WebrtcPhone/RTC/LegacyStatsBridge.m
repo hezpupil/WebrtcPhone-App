@@ -15,62 +15,60 @@
 @property (nonatomic, readonly) NSDictionary *values;
 @end
 
+// 记录分隔符：ASCII 31（Unit Separator），统计键值不会包含该控制字符
+static NSString * const kRecordSep = @"\x1F";
+
 @implementation LegacyStatsBridge
 
 + (void)collect:(id)peerConnection
-     completion:(void (^)(NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *stats))completion {
+     completion:(void (^)(NSArray *records))completion {
     if (!peerConnection || !completion) {
-        if (completion) completion(@{});
+        if (completion) completion(@[]);
         return;
     }
     SEL sel = NSSelectorFromString(@"statisticsWithCompletionHandler:");
     if (![peerConnection respondsToSelector:sel]) {
-        completion(@{});
+        completion(@[]);
         return;
     }
 
     void (^block)(RTCStatisticsReport *) = ^(RTCStatisticsReport *report) {
-        NSMutableDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *out =
-            [NSMutableDictionary dictionary];
+        // 压平为字符串记录数组（无任何嵌套容器跨界，见头文件注释）
+        NSMutableArray<NSString *> *records = [NSMutableArray array];
         @try {
             NSDictionary *stats = report.statistics;
             for (id keyObj in stats) {
-                // 键必须是 NSString，否则进入 Swift 桥接 [String: ...] 会有转换风险
                 if (![keyObj isKindOfClass:[NSString class]]) continue;
-                NSString *key = keyObj;
-                id st = stats[key];
+                NSString *statId = keyObj;
+                id st = stats[statId];
                 if (![st isKindOfClass:[RTCStatistics class]]) continue;
                 RTCStatistics *stat = st;
-                NSMutableDictionary<NSString *, NSString *> *vv =
-                    [NSMutableDictionary dictionary];
-                NSDictionary *values = stat.values;
-                if (values) {
-                    for (id vkObj in values) {
-                        if (![vkObj isKindOfClass:[NSString class]]) continue;
-                        NSString *vk = vkObj;
-                        id v = values[vk];
-                        NSString *s = nil;
-                        if ([v isKindOfClass:[NSString class]]) {
-                            s = v;
-                        } else if ([v isKindOfClass:[NSNumber class]]) {
-                            // 统一走 stringValue：不做任何数值转换语义
-                            s = [(NSNumber *)v stringValue];
-                        } else if ([v isKindOfClass:[NSArray class]]) {
-                            s = [v description];
-                        } else if ([v isKindOfClass:[NSDictionary class]]) {
-                            s = [v description];
-                        }
-                        if (s.length > 0) vv[vk] = s;
-                    }
-                }
                 NSString *type = stat.type ?: @"";
-                out[key] = @{@"type": type, @"values": [vv copy]};
+                NSDictionary *values = stat.values;
+                if (!values) continue;
+                for (id vkObj in values) {
+                    if (![vkObj isKindOfClass:[NSString class]]) continue;
+                    NSString *vk = vkObj;
+                    id v = values[vk];
+                    NSString *s = nil;
+                    if ([v isKindOfClass:[NSString class]]) {
+                        s = v;
+                    } else if ([v isKindOfClass:[NSNumber class]]) {
+                        // 统一走 stringValue：不做任何数值转换语义
+                        s = [(NSNumber *)v stringValue];
+                    }
+                    // 其他容器类型（数组/字典）直接跳过：统计所需字段均为标量
+                    if (s.length == 0) continue;
+                    [records addObject:[NSString stringWithFormat:
+                        @"%@%@%@%@%@%@",
+                        statId, kRecordSep, type, kRecordSep, vk, s]];
+                }
             }
         } @catch (NSException *exception) {
             // 转换异常：返回已转换的部分（或空），调用方降级
         }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            completion(out);
+            completion(records);
         });
     };
 

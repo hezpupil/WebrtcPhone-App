@@ -20,6 +20,25 @@ struct LegacyStatsParser {
     /// 报告类型别名：statsId -> { type, values }
     typealias Report = [String: [String: String]]
 
+    /// 解析 ObjC 桥压平的记录数组（"statId\u{1F}type\u{1F}key\u{1F}value"）。
+    /// 参数为 [Any] 且逐条 as? String 条件转换——跨界不发生任何强制桥接。
+    static func parse(_ records: [Any]) -> Report {
+        var report: Report = [:]
+        for r in records {
+            guard let line = r as? String else { continue }
+            // maxSplits: 3 → 前三段为 statId/type/key，剩余整段作为 value
+            let parts = line.split(separator: "\u{1F}", maxSplits: 3,
+                                   omittingEmptySubsequences: false)
+            guard parts.count == 4 else { continue }
+            let id = String(parts[0])
+            var m = report[id] ?? [:]
+            if m["type"] == nil { m["type"] = String(parts[1]) }
+            m[String(parts[2])] = String(parts[3])
+            report[id] = m
+        }
+        return report
+    }
+
     // MARK: - 唯一数值转换入口（全部 static，调用一律 Self.xxx）
 
     private static func num(_ s: String?) -> Double {

@@ -483,7 +483,10 @@ extension RtcSession: SignalingClient.Listener {
     /// 不含该崩溃类；可在设置「连接统计 (实验)」中关闭。
     private func pollLegacyStats() {
         guard !closed, target.settings.legacyStats, let pc else { return }
-        LegacyStatsBridge.collect(pc) { [weak self] report in
+        LegacyStatsBridge.collect(pc) { [weak self] records in
+            // records: [Any]（无泛型 NSArray 跨界，见 LegacyStatsBridge.h 注释）。
+            // 报告组装在 utility 队列完成，只把纯 Swift 字典带进会话队列。
+            let report = LegacyStatsParser.parse(records)
             guard let self, !self.closed, !report.isEmpty else {
                 if report.isEmpty { trail("stats:legacy empty") }
                 return
