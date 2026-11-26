@@ -20,20 +20,20 @@ struct LegacyStatsParser {
     /// 报告类型别名：statsId -> { type, values }
     typealias Report = [String: [String: String]]
 
-    // MARK: - 唯一数值转换入口
+    // MARK: - 唯一数值转换入口（全部 static，调用一律 Self.xxx）
 
     private static func num(_ s: String?) -> Double {
         guard let s, !s.isEmpty, let d = Double(s), d.isFinite, d.magnitude <= 1e15 else { return 0 }
         return d
     }
 
-    private static func int(_ s: String?) -> Int {
-        idbl(num(s))
-    }
-
     /// Double → Int 唯一直转入口：isFinite + 非负 + 上限三重检查后人工转换
     private static func idbl(_ d: Double) -> Int {
         d.isFinite && d >= 0 && d <= 9e15 ? Int(d) : 0
+    }
+
+    private static func int(_ s: String?) -> Int {
+        idbl(num(s))
     }
 
     private static func str(_ s: String?) -> String? {
@@ -48,12 +48,11 @@ struct LegacyStatsParser {
         var fallback: [String: String]?
         for (_, st) in report {
             guard st["type"] == "candidate-pair" else { continue }
-            let m = st
-            guard str(m["state"]) == "succeeded" else { continue }
-            let nominated = m["nominated"] == "true" || m["nominated"] == "1"
-            let selected = m["selected"] == "true" || m["selected"] == "1"
-            if nominated || selected { pair = m; break }
-            if fallback == nil { fallback = m }
+            guard str(st["state"]) == "succeeded" else { continue }
+            let nominated = st["nominated"] == "true" || st["nominated"] == "1"
+            let selected = st["selected"] == "true" || st["selected"] == "1"
+            if nominated || selected { pair = st; break }
+            if fallback == nil { fallback = st }
         }
         guard let m = pair ?? fallback else { return (0, "", "") }
         let rtt = num(m["currentRoundTripTime"])
@@ -71,52 +70,52 @@ struct LegacyStatsParser {
         return (rtt, cand, proto)
     }
 
-    // MARK: - 视频入站流差分
-
-    private static func videoEntry(_ report: Report) -> [String: String]? {
-        for (_, st) in report {
-            guard st["type"] == "inbound-rtp" else { continue }
-            if str(st["kind"]) == "video" || str(st["mediaType"]) == "video" { return st }
-        }
-        return nil
-    }
+    // MARK: - 视频入站流差分（实例方法：读写差分状态）
 
     private mutating func extractVideo(_ report: Report) -> StreamStats? {
-        guard let video = videoEntry(report) else { return nil }
-        let m = video
-        let ts = num(m["timestamp_us"]) / 1_000_000.0
-        let bytes = num(m["bytesReceived"])
-        let framesDecoded = num(m["framesDecoded"])
-        let decodeTime = num(m["totalDecodeTime"])
-        let jbDelay = num(m["jitterBufferDelay"])
-        let jbEmitted = num(m["jitterBufferEmittedCount"])
-        let lost = num(m["packetsLost"])
-        let recv = num(m["packetsReceived"])
+        var video: [String: String]?
+        for (_, st) in report {
+            guard st["type"] == "inbound-rtp" else { continue }
+            if Self.str(st["kind"]) == "video" || Self.str(st["mediaType"]) == "video" {
+                video = st
+                break
+            }
+        }
+        guard let m = video else { return nil }
+
+        let ts = Self.num(m["timestamp_us"]) / 1_000_000.0
+        let bytes = Self.num(m["bytesReceived"])
+        let framesDecoded = Self.num(m["framesDecoded"])
+        let decodeTime = Self.num(m["totalDecodeTime"])
+        let jbDelay = Self.num(m["jitterBufferDelay"])
+        let jbEmitted = Self.num(m["jitterBufferEmittedCount"])
+        let lost = Self.num(m["packetsLost"])
+        let recv = Self.num(m["packetsReceived"])
 
         var out = StreamStats()
-        out.fps = int(m["framesPerSecond"])
-        out.framesDropped = Int64(int(m["framesDropped"]))  // int() 已过三重检查
-        out.width = int(m["frameWidth"])
-        out.height = int(m["frameHeight"])
-        out.jitterMs = Self.idbl(num(m["jitter"]) * 1000)
+        out.fps = Self.int(m["framesPerSecond"])
+        out.framesDropped = Int64(Self.int(m["framesDropped"]))
+        out.width = Self.int(m["frameWidth"])
+        out.height = Self.int(m["frameHeight"])
+        out.jitterMs = Self.idbl(Self.num(m["jitter"]) * 1000)
 
-        let dt = max(0, ts - lastTs)
-        let dBytes = max(0, bytes - lastBytes)
+        let dt = ts > lastTs ? ts - lastTs : 0
+        let dBytes = bytes > lastBytes ? bytes - lastBytes : 0
         if lastTs > 0 && dt > 0 {
             out.bitrateBps = Int64(Self.idbl(dBytes * 8 / dt))
         }
-        let dFrames = max(0, framesDecoded - lastFramesDecoded)
-        let dTime = max(0, decodeTime - lastDecodeTime)
+        let dFrames = framesDecoded > lastFramesDecoded ? framesDecoded - lastFramesDecoded : 0
+        let dTime = decodeTime > lastDecodeTime ? decodeTime - lastDecodeTime : 0
         if dFrames > 0 {
             out.decodeMs = Self.idbl(dTime / dFrames * 1000)
         }
-        let dEmitted = max(0, jbEmitted - lastJbEmitted)
-        let dJb = max(0, jbDelay - lastJbDelay)
+        let dEmitted = jbEmitted > lastJbEmitted ? jbEmitted - lastJbEmitted : 0
+        let dJb = jbDelay > lastJbDelay ? jbDelay - lastJbDelay : 0
         if dEmitted > 0 {
             out.jitterBufferMs = Self.idbl(dJb / dEmitted * 1000)
         }
-        let dLost = max(0, lost - lastPacketsLost)
-        let dRecv = max(0, recv - lastPacketsReceived)
+        let dLost = lost > lastPacketsLost ? lost - lastPacketsLost : 0
+        let dRecv = recv > lastPacketsReceived ? recv - lastPacketsReceived : 0
         if dLost + dRecv > 0 {
             out.packetLossPct = Float(Self.idbl(dLost * 100 / (dLost + dRecv)))
         }
@@ -125,11 +124,11 @@ struct LegacyStatsParser {
         lastDecodeTime = decodeTime; lastJbDelay = jbDelay; lastJbEmitted = jbEmitted
         lastPacketsLost = lost; lastPacketsReceived = recv
 
-        if let codecId = str(m["codecId"]), let c = report[codecId],
-           let mime = str(c["mimeType"]) {
+        if let codecId = Self.str(m["codecId"]), let c = report[codecId],
+           let mime = Self.str(c["mimeType"]) {
             out.codec = mime.split(separator: "/").last.map(String.init) ?? ""
         }
-        out.decoder = str(m["decoderImplementation"]) ?? ""
+        out.decoder = Self.str(m["decoderImplementation"]) ?? ""
         return out
     }
 
