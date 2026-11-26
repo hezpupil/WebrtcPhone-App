@@ -337,6 +337,7 @@ struct AboutView: View {
 
                 SectionCard(title: "版本信息") {
                     infoRow("版本", "v\(version) (1)")
+                    infoRow("构建标识", AppBuild.tag)
                     Divider().padding(.leading, 14)
                     infoRow("技术架构", "WebRTC P2P · H.264 硬解 · Opus · DataChannel")
                 }
