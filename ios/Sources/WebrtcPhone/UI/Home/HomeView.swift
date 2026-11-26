@@ -495,8 +495,8 @@ struct DeviceActionsSheet: View {
         // 设备标签多选（对齐 Android DeviceTagSheet）
         .sheet(isPresented: $showTags) {
             DeviceTagSheet(deviceId: device.id,
-                           selected: (scope.devices.tags.deviceTags[device.id] ?? []).filter {
-                               scope.devices.tags.tags.contains { $0.id == $1 }
+                           selected: (scope.devices.tags.deviceTags[device.id] ?? []).filter { tagId in
+                               scope.devices.tags.tags.contains { $0.id == tagId }
                            },
                            onManageTags: { showTags = false },
                            onSave: { ids in
@@ -517,7 +517,7 @@ struct DeviceActionsSheet: View {
         .alert("重命名设备", isPresented: $showRename) {
             TextField(device.id, text: $aliasInput)
             Button("确定") {
-                Task { try? await scope.devices.setDeviceAlias(device.id, aliasInput.trimmingCharacters(in: .whitespaces)) }
+                Task { try? await scope.devices.setDeviceAlias(device.id, alias: aliasInput.trimmingCharacters(in: .whitespaces)) }
                 dismiss()
             }
             Button("取消", role: .cancel) {}
@@ -661,12 +661,12 @@ struct CameraPickerSheet: View {
             Text("摄像头监控 · \(device.displayName)")
                 .font(.system(size: 16, weight: .semibold))
             Text("镜头").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            FlowChips(options: lenses.map(\.label), selected: lensIdx) { lensIdx = $0 }
+            SelChips(options: lenses.map(\.label), selected: lensIdx) { lensIdx = $0 }
             Text("分辨率").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            FlowChips(options: CameraResolutions.map(\.1), selected: resIdx) { resIdx = $0 }
+            SelChips(options: CameraResolutions.map(\.1), selected: resIdx) { resIdx = $0 }
             Text("帧率").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            FlowChips(options: ["15 fps", "30 fps", "60 fps"],
-                      selected: [15, 30, 60].firstIndex(of: fps) ?? 1) { idx in
+            SelChips(options: ["15 fps", "30 fps", "60 fps"],
+                     selected: [15, 30, 60].firstIndex(of: fps) ?? 1) { idx in
                 fps = [15, 30, 60][idx]
             }
             HStack {
@@ -697,7 +697,7 @@ struct CameraPickerSheet: View {
 }
 
 /// 横向 chip 组（带选中态）
-struct FlowChips: View {
+struct SelChips: View {
     let options: [String]
     let selected: Int
     let onSelect: (Int) -> Void
@@ -740,7 +740,7 @@ struct DeviceTagSheet: View {
                 Text("还没有标签").font(.system(size: 13)).foregroundStyle(.secondary)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive, spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
                         ForEach(scope.devices.tags.tags) { t in
                             Button {
                                 if sel.contains(t.id) { sel.remove(t.id) } else { sel.insert(t.id) }
