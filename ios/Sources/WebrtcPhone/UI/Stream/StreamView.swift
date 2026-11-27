@@ -1,7 +1,6 @@
 import SwiftUI
 import WebRTC
 import UIKit
-import Combine
 
 /// 视频渲染视图（承载 RTCMTLVideoView），页面重建时通过 SessionManager.attach 复用会话。
 struct VideoRenderView: UIViewRepresentable {
@@ -14,26 +13,19 @@ struct VideoRenderView: UIViewRepresentable {
 
 /// 独立投屏页（对齐 Android StreamScreen）：
 /// 整屏视频 + 底部虚拟导航键 + 可拖动悬浮球 + 左侧切换设备把手 + 工具/文本/画质/信息/终端面板。
-/// 传输通道二选一（对齐 Android StreamViewModel）：
-/// - .webrtc → SessionManager/RtcSession（DataChannel 输入，文件/终端/剪贴板）
-/// - .websocket → WsStreamSession（H.264 裸流 VideoToolbox 解码，仅视频+输入）
 struct StreamView: View {
     let initialDevice: Device
     @ObservedObject var scope: UserScope
     @ObservedObject var container: AppContainer
     /// 独立投屏页的关闭回调（条件渲染替换视图树时由宿主提供）
     var onClose: (() -> Void)? = nil
-    /// 传输通道（默认 WebRTC；WS = 服务器中转 H.264 裸流）。
-    /// @State 化：工具面板「切换传输」在会话内切换并重建会话（对齐 Android switchTransport）
-    @State private var transport: StreamTransport
+    /// 传输通道覆盖（默认 WebRTC；WS 中转模式 iOS 暂未移植，入口禁用）
+    var transport: StreamTransport = .webrtc
     /// 摄像头监控参数（非 nil 时走 camera 模式，对齐 Android CameraPickerSheet）
     var cameraParams: CameraParams? = nil
 
     @State private var currentDevice: Device
     @State private var rendererBox: RTCMTLVideoView?
-    @State private var wsSession: WsStreamSession?
-    @State private var wsRenderer: H264FrameRenderer?
-    @State private var subs = [AnyCancellable]()
     @State private var phase: ConnectionPhase = .signaling
     @State private var videoSize: (Int, Int)?
     @State private var firstFrame = false
@@ -57,21 +49,13 @@ struct StreamView: View {
         self.initialDevice = device
         self.scope = scope
         self.container = container
-        _transport = State(initialValue: transport)
+        self.transport = transport
         self.cameraParams = cameraParams
         self.onClose = onClose
         _currentDevice = State(initialValue: device)
     }
 
     private var session: RtcSession? { scope.sessionManager?.session }
-
-    // MARK: - 传输分流（对齐 Android StreamViewModel：isWs 二选一）
-
-    private var isWs: Bool { transport == .websocket }
-    /// 当前生效会话的 target（WS 会话 / RTC 会话）
-    private var activeTarget: StreamTarget? { isWs ? wsSession?.target : session?.target }
-    /// 统一输入入口：WS 走 group_control_event 下发的同一条 WS
-    private var activeInput: InputProtocol? { isWs ? wsSession?.input : session?.input }
 
     /// 退出投屏页：条件渲染模式下回调宿主关闭，presentation 模式回退 dismiss
     private func closePage() {
@@ -80,18 +64,18 @@ struct StreamView: View {
 
     private var connected: Bool { phase == .connected || phase == .interrupted }
     private var isGuest: Bool {
-        if case .share? = activeTarget?.auth { return true }
+        if case .share? = session?.target.auth { return true }
         return false
     }
-    private var canSwitchDevices: Bool { activeTarget?.isGuest == false }
+    private var canSwitchDevices: Bool { session?.target.isGuest == false }
 
     // 对齐 Android showNav = showNavBar && !isCamera && !viewOnly && !fullscreen
     private var showNavKeys: Bool { container.settings.app.showNavBar && !viewOnly && !fullscreen }
 
     /// 设备逻辑分辨率（触控坐标系），画面旋转时与视频方向不一致则宽高互换
     private var touchDisplaySize: (Int, Int)? {
-        if let d = deviceInfo?.primaryDisplay { return (d.width, d.height) }
-        return activeTarget?.displayHint
+        guard let d = deviceInfo?.primaryDisplay else { return nil }
+        return (d.width, d.height)
     }
 
     var body: some View {
@@ -101,14 +85,10 @@ struct StreamView: View {
             // 主画面列：视频 + 虚拟导航键（对齐 Android Column + NavKeys）
             VStack(spacing: 0) {
                 ZStack {
-                    if isWs {
-                        if let r = wsRenderer {
-                            H264RenderView(renderer: r)
-                        }
-                    } else if let renderer = rendererBox {
+                    if let renderer = rendererBox {
                         VideoRenderView(renderer: renderer)
                     }
-                    TouchLayer(input: activeInput, videoSize: videoSize,
+                    TouchLayer(session: session, videoSize: videoSize,
                                displaySize: touchDisplaySize,
                                viewOnly: viewOnly,
                                haptics: container.settings.app.haptics)
@@ -159,7 +139,7 @@ struct StreamView: View {
             if keyboardMode {
                 VStack {
                     Spacer()
-                    KeyboardBar(input: activeInput, onDone: { keyboardMode = false })
+                    KeyboardBar(session: session, onDone: { keyboardMode = false })
                         .offset(y: -kbObserver.height)
                 }
                 .ignoresSafeArea(.keyboard)
@@ -233,7 +213,7 @@ struct StreamView: View {
             scope.devices.setActive(false)
             // 屏幕常亮（对齐 Android FLAG_KEEP_SCREEN_ON）
             UIApplication.shared.isIdleTimerDisabled = true
-            if container.settings.stream.audio && !isWs {
+            if container.settings.stream.audio {
                 // 用户想开声音：从未询问过权限时先触发一次系统弹窗（授予后下次连接生效）
                 RtcSession.requestMicPermissionIfNeeded()
             }
@@ -244,11 +224,6 @@ struct StreamView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             scope.devices.setActive(true)
             if let renderer = rendererBox { scope.sessionManager?.detach(renderer) }
-            if isWs {
-                subs.removeAll()
-                wsSession?.close()
-                wsSession = nil
-            }
         }
         // 侧边栏打开期间每 10 秒刷新设备列表（对齐 Android openDrawer 轮询）
         .task(id: drawerOpen) {
@@ -277,11 +252,7 @@ struct StreamView: View {
     // MARK: - 连接
 
     private func connect() {
-        let target = makeTarget()
-        if isWs {
-            connectWs(target)
-            return
-        }
+        var target = makeTarget()
         // Metal 视图只在首次进入时创建一次；避免 SwiftUI 结构体重建时反复创建 RTCMTLVideoView
         if rendererBox == nil {
             rendererBox = RTCMTLVideoView()
@@ -295,49 +266,8 @@ struct StreamView: View {
     }
 
     private func restart() {
-        let target = makeTarget()
-        if isWs {
-            restartWs(target)
-            return
-        }
-        let s = scope.sessionManager?.restart(target)
+        let s = scope.sessionManager?.restart(makeTarget())
         subscribeSession(s)
-    }
-
-    // MARK: - WS 模式会话（对齐 Android StreamViewModel.restartWs）
-
-    private func connectWs(_ target: StreamTarget) {
-        if wsRenderer == nil {
-            guard let dev = MTLCreateSystemDefaultDevice(),
-                  let r = H264FrameRenderer(device: dev) else {
-                phase = .failed(message: "解码渲染初始化失败", retryable: false)
-                return
-            }
-            wsRenderer = r
-        }
-        guard let r = wsRenderer else { return }
-        r.clear()
-        Trail.mark("sv:connect-ws dev=\(currentDevice.id)")
-        let ws = WsStreamSession(target: target, httpFactory: container.httpFactory)
-        ws.onFrame = { [weak r] pb in r?.display(pb) }
-        wsSession = ws
-        subscribeWs(ws)
-        ws.start()
-    }
-
-    private func restartWs(_ target: StreamTarget) {
-        subs.removeAll()
-        wsSession?.close()
-        wsSession = nil
-        firstFrame = false
-        connectWs(target)
-    }
-
-    private func subscribeWs(_ ws: WsStreamSession) {
-        ws.$phase.receive(on: DispatchQueue.main).sink { self.phase = $0 }.store(in: &subs)
-        ws.$firstFrame.receive(on: DispatchQueue.main).sink { self.firstFrame = $0 }.store(in: &subs)
-        ws.$stats.receive(on: DispatchQueue.main).sink { self.stats = $0 }.store(in: &subs)
-        ws.$videoSize.receive(on: DispatchQueue.main).sink { self.videoSize = $0 }.store(in: &subs)
     }
 
     private func subscribeSession(_ s: RtcSession?) {
@@ -376,12 +306,12 @@ struct StreamView: View {
 
     private func press(_ key: Int) {
         if viewOnly { toast("当前为仅观看模式"); return }
-        _ = activeInput?.press(key)
+        _ = session?.input.press(key)
     }
 
     private func longPressKey(_ key: Int) {
         if viewOnly { toast("当前为仅观看模式"); return }
-        _ = activeInput?.longPress(key)
+        _ = session?.input.longPress(key)
     }
 
     // MARK: - 面板
@@ -407,7 +337,7 @@ struct StreamView: View {
         case .tools:
             ToolGridSheet(sections: toolSections(),
                           deviceName: currentDevice.displayName,
-                          transportLabel: isWs ? "WS 中转 (TCP)" : "WebRTC 直连")
+                          transportLabel: "WebRTC 直连")
                 .presentationDetents([.medium, .large])
         case .text:
             TextSendSheet(onSend: { sendText($0, $1) },
@@ -447,30 +377,23 @@ struct StreamView: View {
     }
 
     /// 对齐 Android toolSections：按会话权限动态禁用
-    /// WS 模式（仅视频+输入）：文件/安装应用/终端/剪贴板/音频不可用（对齐 Android WsStreamSession 能力边界）
     private func toolSections() -> [(String, [ToolItem])] {
         let control = connected && !viewOnly
         let projection = currentDevice.info.projectionOnDemand
-        let allowClip = (session?.target.allowClipboard ?? activeTarget?.allowClipboard ?? false) && !isWs
+        let allowClip = session?.target.allowClipboard ?? false
 
         return [
             ("设备控制", [
                 ToolItem(label: "断开", icon: "rectangle.portrait.and.arrow.right") {
                     panel = nil
-                    if isWs {
-                        subs.removeAll()
-                        wsSession?.close()
-                        wsSession = nil
-                    } else {
-                        scope.sessionManager?.close(endProjection: true)
-                    }
+                    scope.sessionManager?.close(endProjection: true)
                     closePage()
                 },
                 ToolItem(label: "电源", icon: "power", enabled: control && !projection,
                          onLongClick: { longPressKey(Keys.power) }) { press(Keys.power) },
                 ToolItem(label: container.settings.stream.powerOff ? "息屏中" : "息屏连接",
                          icon: "moon",
-                         enabled: control && !projection,
+                         enabled: connected && !projection,
                          active: container.settings.stream.powerOff) {
                     panel = nil
                     container.settings.updateStream { $0.powerOff.toggle() }
@@ -480,7 +403,7 @@ struct StreamView: View {
                 ToolItem(label: "音量+", icon: "speaker.wave.3", enabled: control && !projection) { press(Keys.volumeUp) },
                 ToolItem(label: "音量-", icon: "speaker.wave.1", enabled: control && !projection) { press(Keys.volumeDown) },
                 ToolItem(label: "通知栏", icon: "bell", enabled: control && !projection) { press(Keys.notification) },
-                ToolItem(label: "截图", icon: "camera.viewfinder", enabled: connected && !isWs) {
+                ToolItem(label: "截图", icon: "camera.viewfinder", enabled: connected) {
                     panel = nil
                     press(Keys.screenshot)
                 },
@@ -507,15 +430,15 @@ struct StreamView: View {
             ]),
             ("工具", [
                 ToolItem(label: "文件", icon: "folder",
-                         enabled: connected && !isWs && (session?.target.allowFileTx ?? false) && !viewOnly) {
+                         enabled: connected && (session?.target.allowFileTx ?? false) && !viewOnly) {
                     presentPanel(.files)
                 },
                 ToolItem(label: "安装应用", icon: "square.grid.2x2",
-                         enabled: connected && !isWs && (session?.target.allowFileTx ?? false) && !viewOnly) {
+                         enabled: connected && (session?.target.allowFileTx ?? false) && !viewOnly) {
                     presentPanel(.apps)
                 },
                 ToolItem(label: "终端", icon: "terminal",
-                         enabled: connected && !isWs && (session?.target.allowTerminal ?? false) && !viewOnly) {
+                         enabled: connected && (session?.target.allowTerminal ?? false) && !viewOnly) {
                     presentPanel(nil)
                     showTerminal = true
                 },
@@ -529,7 +452,7 @@ struct StreamView: View {
                 ToolItem(label: "画质", icon: "slider.horizontal.3") { presentPanel(.quality) },
                 ToolItem(label: audioOn ? "声音开" : "已静音",
                          icon: audioOn ? "speaker.wave.3" : "speaker.slash",
-                         enabled: !isWs, active: !audioOn) {
+                         enabled: true, active: !audioOn) {
                     audioOn.toggle()
                     session?.setAudioEnabled(audioOn)
                     toast(audioOn ? "已开启声音" : "已静音")
@@ -539,12 +462,6 @@ struct StreamView: View {
                     container.settings.updateApp { $0.showStats.toggle() }
                 },
                 ToolItem(label: "连接信息", icon: "info.circle") { presentPanel(.info) },
-                ToolItem(label: isWs ? "切到 WebRTC" : "切到 WS 模式",
-                         icon: "arrow.triangle.swap",
-                         enabled: !isGuest && !projection) {
-                    panel = nil
-                    switchTransport()
-                },
                 ToolItem(label: "全屏模式", icon: "arrow.up.left.and.arrow.down.right",
                          enabled: true, active: fullscreen) {
                     panel = nil
@@ -558,46 +475,20 @@ struct StreamView: View {
         ]
     }
 
-    /// 会话内切换传输方式（对齐 Android switchTransport）：关闭当前会话，以新 transport 重建
-    private func switchTransport() {
-        toast(isWs ? "切换到 WebRTC 直连…" : "切换到 WS 中转…")
-        if isWs {
-            subs.removeAll()
-            wsSession?.close()
-            wsSession = nil
-            firstFrame = false
-            phase = .signaling
-            transport = .webrtc
-        } else {
-            scope.sessionManager?.close()
-            firstFrame = false
-            phase = .signaling
-            transport = .websocket
-        }
-        // 渲染视图分支切换后下一帧重建；直接重建会话
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            restart()
-        }
-    }
-
     // MARK: - 文本 / 剪贴板
 
     private func sendText(_ text: String, _ autoEnter: Bool) {
         if viewOnly { toast("当前为仅观看模式"); return }
         guard !text.isEmpty else { return }
         var ok: Bool
-        if isWs {
-            // WS 模式无剪贴板通道，统一走 inject_text（对齐 Android sendText）
-            ok = activeInput?.text(text) ?? false
-        } else if text.count > 200 || text.contains("\n") {
+        if text.count > 200 || text.contains("\n") {
             ok = session?.clipboard.setClipboard(text, paste: true, force: true) ?? false
             if !ok { ok = session?.input.text(text) ?? false }
         } else {
             ok = session?.input.text(text) ?? false
         }
         if !ok { toast("控制通道未就绪"); return }
-        if autoEnter { _ = activeInput?.press(Keys.enter) }
+        if autoEnter { _ = session?.input.press(Keys.enter) }
         toast("已发送")
     }
 

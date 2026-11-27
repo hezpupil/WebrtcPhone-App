@@ -21,11 +21,7 @@ struct HomeView: View {
                             streamCamera = nil
                             streaming = d
                         },
-                        onStreamWs: { d in
-                            streamTransport = .websocket
-                            streamCamera = nil
-                            streaming = d
-                        },
+                        onStreamWs: { _ in /* WS 中转 iOS 暂未移植 */ },
                         onStreamCamera: { d, p in
                             streamTransport = .webrtc
                             streamCamera = p
@@ -64,7 +60,7 @@ struct HomeView: View {
 struct DevicesTab: View {
     /// 连接并投屏回调（投屏页由 HomeView 顶层全屏承载，覆盖 TabBar）
     let onStream: (Device) -> Void
-    /// WS 中转投屏（WebSocket H.264 裸流，VideoToolbox 解码）
+    /// WS 中转投屏（iOS 暂未移植 WS 流栈，入口禁用）
     let onStreamWs: (Device) -> Void
     /// 摄像头监控投屏
     let onStreamCamera: (Device, CameraParams) -> Void
@@ -446,9 +442,10 @@ struct DeviceActionsSheet: View {
                     dismiss(); onStream()
                 }
                 if !device.info.projectionOnDemand {
+                    // WS 中转流栈 iOS 暂未移植：行保留（样式 1:1）但禁用
                     ActionRow(icon: "bolt", title: "WS 模式投屏",
-                              sub: "WebSocket 中转，免 P2P 穿透（视频+直控）",
-                              enabled: device.online) {
+                              sub: "WebSocket 中转，免 P2P 穿透（iOS 后续版本支持）",
+                              enabled: false) {
                         dismiss(); onStreamWs()
                     }
                     ActionRow(icon: "video", title: "摄像头监控",
