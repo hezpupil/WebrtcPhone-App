@@ -18,11 +18,17 @@ final class WsStreamSession: ObservableObject {
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var delegate: WebSocketSessionDelegate?
+    private var pingTimer: DispatchSourceTimer?
     private var closed = false
 
     private let decodeQueue = DispatchQueue(label: "ws.decode")
     private var decoder: H264Decoder?
     private var gotKeyFrame = false
+    // trail 观测（跨线程只作趋势记录，不需精确）
+    private var gotAnyBin = false
+    private var gotAnyText = false
+    private var skipCount = 0
+    private var badBinCount = 0
     private var frameCount: Int64 = 0
     private var byteCount: Int64 = 0
     private var lastStatsAt = Date()
@@ -56,6 +62,7 @@ final class WsStreamSession: ObservableObject {
                 if !self.firstFrame {
                     self.firstFrame = true
                     self.phase = .connected
+                    Trail.mark("ws:first-frame")
                 }
                 if let s = size { self.videoSize = (Int(s.width), Int(s.height)) }
                 self.frameCount += 1
@@ -65,7 +72,13 @@ final class WsStreamSession: ObservableObject {
         var components = URLComponents(string: ep.wsUrl("/connect_client"))!
         var headers: [String: String] = [:]
         switch target.auth {
-        case .user(let token): headers["Authorization"] = "Bearer \(token)"
+        case .user(let token):
+            // 鉴权走 query token（对齐 Android "?token=$token"，web-app 系服务端从
+            // query 读身份；握手成功但身份缺失时服务端不推流，表现为卡 negotiating）
+            var items = components.queryItems ?? []
+            items.append(URLQueryItem(name: "token", value: token))
+            components.queryItems = items
+            headers["Authorization"] = "Bearer \(token)"
         case .share(let t, let p):
             var items = components.queryItems ?? []
             items.append(URLQueryItem(name: "share_token", value: t))
@@ -74,23 +87,28 @@ final class WsStreamSession: ObservableObject {
         }
         var request = URLRequest(url: components.url!)
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        Trail.mark("ws:connect dev=\(target.deviceId)")
 
         let (session, delegate) = httpFactory.newWebSocketSession(for: ep)
         self.session = session
         self.delegate = delegate
         delegate.onOpen = { [weak self] in
             guard let self, !self.closed else { return }
+            Trail.mark("ws:open")
             Task { @MainActor in
                 self.phase = .waitingOffer
                 let s = self.target.settings
                 let bps = max(1, s.bitrateMbps) * 1_000_000
-                self.sendText(WsProtocol.startPreview(deviceId: self.target.deviceId, fps: s.maxFps,
-                                                       maxSize: s.maxSize, bitrateBps: bps, stayAwake: true))
+                let msg = WsProtocol.startPreview(deviceId: self.target.deviceId, fps: s.maxFps,
+                                                  maxSize: s.maxSize, bitrateBps: bps, stayAwake: true)
+                self.sendText(msg)
+                Trail.mark("ws:start-sent fps=\(s.maxFps) size=\(s.maxSize) bps=\(bps)")
                 self.phase = .negotiating
             }
         }
         delegate.onFailure = { [weak self] error, code in
             guard let self, !self.closed else { return }
+            Trail.mark("ws:failure http=\(code ?? -1) err=\(error.localizedDescription)")
             Task { @MainActor in
                 let auth = code == 401 || code == 403
                 self.phase = .failed(message: auth ? "登录已失效" : "连接失败：\(error.localizedDescription)",
@@ -99,12 +117,16 @@ final class WsStreamSession: ObservableObject {
         }
         delegate.onClose = { [weak self] _, _ in
             guard let self, !self.closed else { return }
+            Trail.mark("ws:close")
             Task { @MainActor in self.phase = .failed(message: "连接已断开", retryable: true) }
         }
         let wsTask = session.webSocketTask(with: request)
+        // 服务端大码流关键帧可能超默认 1MB 上限（URLSessionWebSocketTask 默认按此截断报错）
+        wsTask.maximumMessageSize = 8 * 1024 * 1024
         self.task = wsTask
         wsTask.resume()
         receiveLoop()
+        startPing(wsTask)
 
         statsTimer = DispatchSource.makeTimerSource(queue: decodeQueue)
         statsTimer?.schedule(deadline: .now() + 1, repeating: 1)
@@ -112,9 +134,23 @@ final class WsStreamSession: ObservableObject {
         statsTimer?.resume()
     }
 
+    /// 协议级 ping 心跳（对齐 Android OkHttp pingInterval 25s）：维持代理/NAT 表项，
+    /// 防止无媒体流期间的空闲超时断开
+    private func startPing(_ wsTask: URLSessionWebSocketTask) {
+        pingTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: decodeQueue)
+        timer.schedule(deadline: .now() + 25, repeating: 25)
+        timer.setEventHandler { [weak wsTask] in
+            wsTask?.sendPing(pongReceiveHandler: { _ in })
+        }
+        timer.resume()
+        pingTimer = timer
+    }
+
     func close() {
         guard !closed else { return }
         closed = true
+        pingTimer?.cancel(); pingTimer = nil
         statsTimer?.cancel(); statsTimer = nil
         // 对齐 Android：先发 stop_preview 让 agent 停推（发送失败不影响关闭流程）
         sendText(WsProtocol.stopPreview(target.deviceId))
@@ -137,18 +173,35 @@ final class WsStreamSession: ObservableObject {
             case .success(let message):
                 switch message {
                 case .data(let data):
+                    if !self.gotAnyBin {
+                        self.gotAnyBin = true
+                        Trail.mark("ws:first-bin len=\(data.count)")
+                    }
                     if let frame = WsProtocol.parsePrev(data) {
+                        // 等关键帧期间的丢弃记录（前 3 次，避免刷爆 trail）
+                        if !self.gotKeyFrame, !frame.isKey, self.skipCount < 3 {
+                            self.skipCount += 1
+                            let nal = frame.nalu.count > 4 ? Int(frame.nalu[4] & 0x1F) : -1
+                            Trail.mark("ws:skip-nonkey nal=\(nal)")
+                        }
                         if !frame.deviceId.isEmpty && frame.deviceId != self.target.deviceId { return }
                         self.byteCount += Int64(frame.nalu.count)
                         self.feed(frame.nalu, isKey: frame.isKey)
+                    } else if self.badBinCount < 3 {
+                        self.badBinCount += 1
+                        Trail.mark("ws:bad-bin len=\(data.count)")
                     }
-                case .string:
-                    break
+                case .string(let text):
+                    if !self.gotAnyText {
+                        self.gotAnyText = true
+                        Trail.mark("ws:first-text \(text.prefix(120))")
+                    }
                 @unknown default:
                     break
                 }
                 self.receiveLoop()
-            case .failure:
+            case .failure(let error):
+                Trail.mark("ws:recv-fail \(error.localizedDescription)")
                 Task { @MainActor in
                     if !self.closed { self.phase = .failed(message: "连接已断开", retryable: true) }
                 }
