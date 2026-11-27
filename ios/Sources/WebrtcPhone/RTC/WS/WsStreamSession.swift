@@ -19,6 +19,8 @@ final class WsStreamSession: ObservableObject {
     private var task: URLSessionWebSocketTask?
     private var delegate: WebSocketSessionDelegate?
     private var pingTimer: DispatchSourceTimer?
+    private var watchdogTimer: DispatchSourceTimer?
+    private var restartCount = 0
     private var closed = false
 
     private let decodeQueue = DispatchQueue(label: "ws.decode")
@@ -63,11 +65,24 @@ final class WsStreamSession: ObservableObject {
                     self.firstFrame = true
                     self.phase = .connected
                     Trail.mark("ws:first-frame")
+                    // 出画后停看门狗
+                    self.watchdogTimer?.cancel(); self.watchdogTimer = nil
                 }
                 if let s = size { self.videoSize = (Int(s.width), Int(s.height)) }
                 self.frameCount += 1
             }
         }
+        connectSocket()
+        startWatchdog()
+
+        statsTimer = DispatchSource.makeTimerSource(queue: decodeQueue)
+        statsTimer?.schedule(deadline: .now() + 1, repeating: 1)
+        statsTimer?.setEventHandler { [weak self] in self?.tickStats() }
+        statsTimer?.resume()
+    }
+
+    /// 连接（可重入：resetConnection 后重连）
+    private func connectSocket() {
         let ep = target.endpoint
         var components = URLComponents(string: ep.wsUrl("/connect_client"))!
         var headers: [String: String] = [:]
@@ -97,6 +112,9 @@ final class WsStreamSession: ObservableObject {
             Trail.mark("ws:open")
             Task { @MainActor in
                 self.phase = .waitingOffer
+                // 先注册连接↔设备绑定（对齐 SignalingClient onOpen 的 connect 消息），
+                // 服务端据此知道这条 client 连接关注哪台设备，之后才响应 start_preview
+                self.sendText(SignalingProtocol.connect(self.target.deviceId))
                 let s = self.target.settings
                 let bps = max(1, s.bitrateMbps) * 1_000_000
                 let msg = WsProtocol.startPreview(deviceId: self.target.deviceId, fps: s.maxFps,
@@ -127,11 +145,46 @@ final class WsStreamSession: ObservableObject {
         wsTask.resume()
         receiveLoop()
         startPing(wsTask)
+    }
 
-        statsTimer = DispatchSource.makeTimerSource(queue: decodeQueue)
-        statsTimer?.schedule(deadline: .now() + 1, repeating: 1)
-        statsTimer?.setEventHandler { [weak self] in self?.tickStats() }
-        statsTimer?.resume()
+    /// 首帧看门狗：agent 重启推流从 I 帧开始有延迟（GOP 内只能跟到 P 帧且客户端
+    /// 会丢弃未带 I 帧的 P 帧），偶发长时间无画面 = 时序竞态。12s 无首帧则重连
+    /// 重发 start_preview（促使 agent 重新起推流），最多 2 次，再失败才报错。
+    private func startWatchdog() {
+        watchdogTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: decodeQueue)
+        timer.schedule(deadline: .now() + 12)
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.closed else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closed, !self.firstFrame, !self.phase.isTerminal else { return }
+                if self.restartCount < 2 {
+                    self.restartCount += 1
+                    Trail.mark("ws:watchdog-restart #\(self.restartCount)")
+                    self.resetConnection()
+                } else {
+                    Trail.mark("ws:watchdog-giveup")
+                    self.phase = .failed(message: "连接超时（未收到视频流），请重试", retryable: true)
+                }
+            }
+        }
+        timer.resume()
+        watchdogTimer = timer
+    }
+
+    /// 内部重连：只重建连接层，解码器/统计/首帧状态复位
+    private func resetConnection() {
+        pingTimer?.cancel(); pingTimer = nil
+        task?.cancel(with: .normalClosure, reason: nil)
+        session?.invalidateAndCancel()
+        task = nil; session = nil; delegate = nil
+        gotKeyFrame = false
+        gotAnyBin = false; gotAnyText = false
+        skipCount = 0; badBinCount = 0
+        phase = .signaling
+        let dec = decoder
+        decodeQueue.async { dec?.reset() }
+        connectSocket()
     }
 
     /// 协议级 ping 心跳（对齐 Android OkHttp pingInterval 25s）：维持代理/NAT 表项，
@@ -150,6 +203,7 @@ final class WsStreamSession: ObservableObject {
     func close() {
         guard !closed else { return }
         closed = true
+        watchdogTimer?.cancel(); watchdogTimer = nil
         pingTimer?.cancel(); pingTimer = nil
         statsTimer?.cancel(); statsTimer = nil
         // 对齐 Android：先发 stop_preview 让 agent 停推（发送失败不影响关闭流程）
@@ -195,6 +249,16 @@ final class WsStreamSession: ObservableObject {
                     if !self.gotAnyText {
                         self.gotAnyText = true
                         Trail.mark("ws:first-text \(text.prefix(120))")
+                    }
+                    // 服务端 error 回复透出（如 start_preview 被拒 / 设备不支持推流）
+                    if let obj = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+                       (obj["message_type"] as? String) == "error" {
+                        let msg = (obj["message"] as? String) ?? (obj["detail"] as? String) ?? "服务端拒绝请求"
+                        DispatchQueue.main.async {
+                            guard !self.closed, !self.phase.isTerminal else { return }
+                            Trail.mark("ws:server-error \(msg.prefix(80))")
+                            self.phase = .failed(message: "服务端：\(msg)", retryable: true)
+                        }
                     }
                 @unknown default:
                     break
